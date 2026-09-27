@@ -1,0 +1,65 @@
+name: TCP Fingerprint Build and Release
+
+on:
+  push:
+    branches: [tcp-fingerprint]
+    tags: ['fp-v*']
+  pull_request:
+    branches: [tcp-fingerprint]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fingerprint-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Test and build static Linux amd64 release
+        run: bash scripts/build-fingerprint-release.sh
+      - name: Race tests
+        run: |
+          go test -race ./proxy/freedom/... ./transport/internet ./app/proxyman/outbound ./infra/conf \
+            -run 'TestFreedom|TestOutbound|TestTCP|TestFingerprint|TestCanceledReply|TestProcessIdentity' -count=1
+      - name: Prepare packet capture tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y iproute2 nftables tcpdump curl
+          sudo modprobe tun
+      - name: Verify manual and automatic networking with packet captures
+        run: |
+          sudo python3 testing/fingerprint/e2e.py "$PWD/dist/xray-fingerprint"
+          sudo python3 testing/fingerprint/auto_e2e.py "$PWD/dist/xray-fingerprint"
+      - name: Save packet capture reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fingerprint-test-evidence
+          path: testing/fingerprint/artifacts/
+          if-no-files-found: ignore
+      - name: Save release assets
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: xray-fingerprint-linux-amd64
+          path: dist/
+          if-no-files-found: error
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/fp-v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" dist/xray-fingerprint dist/xray-fingerprint-linux-amd64.tar.gz dist/SHA256SUMS \
+            --verify-tag --title "Xray TCP Fingerprint $TAG" --notes-file docs/fingerprint-release-notes.md
+    permissions:
+      contents: write

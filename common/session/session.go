@@ -35,6 +35,8 @@ func ExportIDToError(ctx context.Context) errors.ExportOption {
 
 // Inbound is the metadata of an inbound connection.
 type Inbound struct {
+	// TCPFingerprint is the locally observed physical TCP peer category, never client-supplied metadata.
+	TCPFingerprint string
 	// Source address of the inbound connection.
 	Source net.Destination
 	// Local address of the inbound connection.

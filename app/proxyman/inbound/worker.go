@@ -59,9 +59,19 @@ func getTProxyType(s *internet.MemoryStreamConfig) internet.SocketConfig_TProxyM
 }
 
 func (w *tcpWorker) callback(conn stat.Connection) {
+	profile := ""
+	if captured, ok := conn.(*internet.FingerprintedConn); ok {
+		profile = captured.Profile
+		conn = captured.Conn
+	}
 	ctx, cancel := context.WithCancel(w.ctx)
 	sid := session.NewID()
 	ctx = c.ContextWithID(ctx, sid)
+	observed := profile
+	if observed == "" {
+		observed = "unknown"
+	}
+	errors.LogInfo(ctx, "TCP fingerprint inbound: detected=", observed, " peer=", conn.RemoteAddr())
 
 	outbounds := []*session.Outbound{{}}
 	if w.recvOrigDest {
@@ -109,11 +119,12 @@ func (w *tcpWorker) callback(conn stat.Connection) {
 		}
 	}
 	ctx = session.ContextWithInbound(ctx, &session.Inbound{
-		Source:  net.DestinationFromAddr(conn.RemoteAddr()),
-		Local:   net.DestinationFromAddr(conn.LocalAddr()),
-		Gateway: net.TCPDestination(w.address, w.port),
-		Tag:     w.tag,
-		Conn:    conn,
+		TCPFingerprint: profile,
+		Source:         net.DestinationFromAddr(conn.RemoteAddr()),
+		Local:          net.DestinationFromAddr(conn.LocalAddr()),
+		Gateway:        net.TCPDestination(w.address, w.port),
+		Tag:            w.tag,
+		Conn:           conn,
 	})
 
 	content := new(session.Content)

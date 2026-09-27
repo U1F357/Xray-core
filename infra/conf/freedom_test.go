@@ -1,6 +1,7 @@
 package conf_test
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/xtls/xray-core/common/geodata"
@@ -10,6 +11,40 @@ import (
 	"github.com/xtls/xray-core/proxy/freedom"
 	"github.com/xtls/xray-core/transport/internet"
 )
+
+func TestFreedomTCPFingerprint(t *testing.T) {
+	automatic, err := (&FreedomConfig{TCPFingerprint: "windows"}).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if automatic.(*freedom.Config).TcpFingerprintSettings != nil {
+		t.Fatal("automatic mode unexpectedly requires settings")
+	}
+	for _, profile := range []string{"windows", "macos", "linux"} {
+		var c FreedomConfig
+		input := `{"tcpFingerprint":"` + profile + `","tcpFingerprintSettings":{"tun":"xrfp0","address":"10.203.0.2"}}`
+		if err := json.Unmarshal([]byte(input), &c); err != nil {
+			t.Fatal(err)
+		}
+		built, err := c.Build()
+		if err != nil {
+			t.Fatal(err)
+		}
+		fc := built.(*freedom.Config)
+		if fc.TcpFingerprint != profile || fc.TcpFingerprintSettings.Tun != "xrfp0" || fc.TcpFingerprintSettings.Address != "10.203.0.2" {
+			t.Fatalf("incorrect config: %v", fc)
+		}
+	}
+	for _, input := range []string{`{"tcpFingerprint":"invalid"}`, `{"tcpFingerprint":"windows","tcpFingerprintSettings":{}}`, `{"tcpFingerprintSettings":{"tun":"xrfp0","address":"10.203.0.2"}}`} {
+		var c FreedomConfig
+		if err := json.Unmarshal([]byte(input), &c); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.Build(); err == nil {
+			t.Fatalf("accepted %s", input)
+		}
+	}
+}
 
 func TestFreedomConfig(t *testing.T) {
 	creator := func() Buildable {
@@ -99,4 +134,28 @@ func TestFreedomConfig(t *testing.T) {
 			},
 		},
 	})
+}
+
+func TestFreedomTCPFingerprintAuto(t *testing.T) {
+	var c FreedomConfig
+	if err := json.Unmarshal([]byte(`{"tcpFingerprint":"AUTO","tcpFingerprintFallback":"MACOS"}`), &c); err != nil {
+		t.Fatal(err)
+	}
+	built, err := c.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	fc := built.(*freedom.Config)
+	if fc.TcpFingerprint != "auto" || fc.TcpFingerprintFallback != "macos" {
+		t.Fatalf("incorrect config: %v", fc)
+	}
+	for _, input := range []string{`{"tcpFingerprintFallback":"linux"}`, `{"tcpFingerprint":"auto","tcpFingerprintFallback":"native"}`, `{"tcpFingerprint":"auto","tcpFingerprintSettings":{"tun":"fp0","address":"10.0.0.2"}}`} {
+		var invalid FreedomConfig
+		if err := json.Unmarshal([]byte(input), &invalid); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := invalid.Build(); err == nil {
+			t.Fatalf("accepted %s", input)
+		}
+	}
 }

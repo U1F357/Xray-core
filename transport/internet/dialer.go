@@ -47,6 +47,9 @@ func RegisterTransportDialer(protocol string, dialer dialFunc) error {
 // Dial dials a internet connection towards the given destination.
 func Dial(ctx context.Context, dest net.Destination, streamSettings *MemoryStreamConfig) (stat.Connection, error) {
 	if dest.Network == net.Network_TCP {
+		if dial, ok := ctx.Value(tcpDialerContextKey{}).(TCPDialFunc); ok {
+			return dial(ctx, dest)
+		}
 		if streamSettings == nil {
 			s, err := ToMemoryStreamConfig(nil)
 			if err != nil {

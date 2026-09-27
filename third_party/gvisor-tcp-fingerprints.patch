@@ -1,0 +1,704 @@
+diff --git a/pkg/tcpip/tcpip.go b/pkg/tcpip/tcpip.go
+index e295f75..11867dc 100644
+--- a/pkg/tcpip/tcpip.go
++++ b/pkg/tcpip/tcpip.go
+@@ -1079,6 +1079,27 @@ type SettableTransportProtocolOption interface {
+ 	isSettableTransportProtocolOption()
+ }
+ 
++// TCPFingerprintProfile selects the active-open SYN fingerprint. The setting
++// is sampled at handshake start; passive opens retain upstream behavior.
++// Explicit SACK disabling and small receive buffers take precedence over an
++// exact fingerprint. MSS is always derived from the route and socket settings.
++type TCPFingerprintProfile int
++
++const (
++	// TCPFingerprintNative retains upstream gVisor behavior.
++	TCPFingerprintNative TCPFingerprintProfile = iota
++	// TCPFingerprintWindows selects 64240_2-1-3-1-1-4_<MSS>_8.
++	TCPFingerprintWindows
++	// TCPFingerprintMacOS selects 65535_2-1-3-1-1-8-4-0-0_<MSS>_6.
++	TCPFingerprintMacOS
++	// TCPFingerprintLinux selects 65535_2-4-8-1-3_<MSS>_9.
++	TCPFingerprintLinux
++)
++
++func (*TCPFingerprintProfile) isGettableTransportProtocolOption() {}
++
++func (*TCPFingerprintProfile) isSettableTransportProtocolOption() {}
++
+ // TCPSACKEnabled the SACK option for TCP.
+ //
+ // See: https://tools.ietf.org/html/rfc2018.
+diff --git a/pkg/tcpip/transport/tcp/connect.go b/pkg/tcpip/transport/tcp/connect.go
+index d6ad34e..588ed8b 100644
+--- a/pkg/tcpip/transport/tcp/connect.go
++++ b/pkg/tcpip/transport/tcp/connect.go
+@@ -74,8 +74,10 @@ type handshake struct {
+ 	listenEP *Endpoint
+ 	state    handshakeState
+ 	active   bool
+-	flags    header.TCPFlags
+-	ackNum   seqnum.Value
++	// fingerprintProfile is fixed for the lifetime of this handshake.
++	fingerprintProfile tcpip.TCPFingerprintProfile
++	flags              header.TCPFlags
++	ackNum             seqnum.Value
+ 
+ 	// iss is the initial send sequence number, as defined in RFC 793.
+ 	iss seqnum.Value
+@@ -321,6 +323,10 @@ func (h *handshake) synSentState(s *segment) tcpip.Error {
+ 
+ 	// Parse the SYN options.
+ 	rcvSynOpts := parseSynSegmentOptions(s)
++	if h.fingerprintProfile == tcpip.TCPFingerprintWindows {
++		// We did not offer timestamps, even if the peer sends them unsolicited.
++		rcvSynOpts.TS = false
++	}
+ 
+ 	// Remember if the Timestamp option was negotiated.
+ 	h.ep.maybeEnableTimestamp(rcvSynOpts)
+@@ -367,15 +373,16 @@ func (h *handshake) synSentState(s *segment) tcpip.Error {
+ 		ttl = h.ep.route.DefaultTTL()
+ 	}
+ 	h.ep.sendSynTCP(h.ep.route, tcpFields{
+-		id:        h.ep.TransportEndpointInfo.ID,
+-		ttl:       ttl,
+-		tos:       h.ep.sendTOS,
+-		flags:     h.flags,
+-		seq:       h.iss,
+-		ack:       h.ackNum,
+-		rcvWnd:    h.rcvWnd,
+-		df:        h.ep.pmtud == tcpip.PMTUDiscoveryWant || h.ep.pmtud == tcpip.PMTUDiscoveryDo || h.ep.pmtud == tcpip.PMTUDiscoveryProbe,
+-		expOptVal: h.ep.getExperimentOptionValue(h.ep.route),
++		id:                 h.ep.TransportEndpointInfo.ID,
++		ttl:                ttl,
++		tos:                h.ep.sendTOS,
++		flags:              h.flags,
++		seq:                h.iss,
++		ack:                h.ackNum,
++		rcvWnd:             h.rcvWnd,
++		fingerprintProfile: h.fingerprintProfile,
++		df:                 h.ep.pmtud == tcpip.PMTUDiscoveryWant || h.ep.pmtud == tcpip.PMTUDiscoveryDo || h.ep.pmtud == tcpip.PMTUDiscoveryProbe,
++		expOptVal:          h.ep.getExperimentOptionValue(h.ep.route),
+ 	}, synOpts)
+ 	return nil
+ }
+@@ -458,15 +465,16 @@ func (h *handshake) synRcvdState(s *segment) tcpip.Error {
+ 			MSS:           h.ep.amss,
+ 		}
+ 		h.ep.sendSynTCP(h.ep.route, tcpFields{
+-			id:        h.ep.TransportEndpointInfo.ID,
+-			ttl:       calculateTTL(h.ep.route, h.ep.ipv4TTL, h.ep.ipv6HopLimit),
+-			tos:       h.ep.sendTOS,
+-			flags:     h.flags,
+-			seq:       h.iss,
+-			ack:       h.ackNum,
+-			rcvWnd:    h.rcvWnd,
+-			df:        h.ep.pmtud == tcpip.PMTUDiscoveryWant || h.ep.pmtud == tcpip.PMTUDiscoveryDo || h.ep.pmtud == tcpip.PMTUDiscoveryProbe,
+-			expOptVal: h.ep.getExperimentOptionValue(h.ep.route),
++			id:                 h.ep.TransportEndpointInfo.ID,
++			ttl:                calculateTTL(h.ep.route, h.ep.ipv4TTL, h.ep.ipv6HopLimit),
++			tos:                h.ep.sendTOS,
++			flags:              h.flags,
++			seq:                h.iss,
++			ack:                h.ackNum,
++			rcvWnd:             h.rcvWnd,
++			fingerprintProfile: h.fingerprintProfile,
++			df:                 h.ep.pmtud == tcpip.PMTUDiscoveryWant || h.ep.pmtud == tcpip.PMTUDiscoveryDo || h.ep.pmtud == tcpip.PMTUDiscoveryProbe,
++			expOptVal:          h.ep.getExperimentOptionValue(h.ep.route),
+ 		}, synOpts)
+ 		return nil
+ 	}
+@@ -573,6 +581,26 @@ func (h *handshake) processSegments() tcpip.Error {
+ // +checklocks:h.ep.mu
+ func (h *handshake) start() {
+ 	h.startTime = h.ep.stack.Clock().NowMonotonic()
++	if h.active {
++		var profile tcpip.TCPFingerprintProfile
++		if err := h.ep.stack.TransportProtocolOption(ProtocolNumber, &profile); err == nil {
++			h.fingerprintProfile = profile
++			window := 0
++			switch profile {
++			case tcpip.TCPFingerprintWindows:
++				window, h.rcvWndScale = 64240, 8
++			case tcpip.TCPFingerprintMacOS:
++				window, h.rcvWndScale = 65535, 6
++			case tcpip.TCPFingerprintLinux:
++				window, h.rcvWndScale = 65535, 9
++			}
++			if window != 0 {
++				// SYN windows are unscaled. The receiver must use the same
++				// scale as the wire offer, including after retransmission.
++				h.rcvWnd = seqnum.Size(min(window, wndFromSpace(h.ep.receiveBufferAvailable())))
++			}
++		}
++	}
+ 	h.ep.amss = calculateAdvertisedMSS(h.ep.userMSS, h.ep.route)
+ 	var sackEnabled tcpip.TCPSACKEnabled
+ 	if err := h.ep.stack.TransportProtocolOption(ProtocolNumber, &sackEnabled); err != nil {
+@@ -583,7 +611,7 @@ func (h *handshake) start() {
+ 
+ 	synOpts := header.TCPSynOptions{
+ 		WS:            h.rcvWndScale,
+-		TS:            true,
++		TS:            h.fingerprintProfile != tcpip.TCPFingerprintWindows,
+ 		TSVal:         h.ep.tsValNow(),
+ 		TSEcr:         h.ep.recentTimestamp(),
+ 		SACKPermitted: bool(sackEnabled),
+@@ -604,15 +632,16 @@ func (h *handshake) start() {
+ 
+ 	h.sendSYNOpts = synOpts
+ 	h.ep.sendSynTCP(h.ep.route, tcpFields{
+-		id:        h.ep.TransportEndpointInfo.ID,
+-		ttl:       calculateTTL(h.ep.route, h.ep.ipv4TTL, h.ep.ipv6HopLimit),
+-		tos:       h.ep.sendTOS,
+-		flags:     h.flags,
+-		seq:       h.iss,
+-		ack:       h.ackNum,
+-		rcvWnd:    h.rcvWnd,
+-		df:        h.ep.pmtud == tcpip.PMTUDiscoveryWant || h.ep.pmtud == tcpip.PMTUDiscoveryDo || h.ep.pmtud == tcpip.PMTUDiscoveryProbe,
+-		expOptVal: h.ep.getExperimentOptionValue(h.ep.route),
++		id:                 h.ep.TransportEndpointInfo.ID,
++		ttl:                calculateTTL(h.ep.route, h.ep.ipv4TTL, h.ep.ipv6HopLimit),
++		tos:                h.ep.sendTOS,
++		flags:              h.flags,
++		seq:                h.iss,
++		ack:                h.ackNum,
++		rcvWnd:             h.rcvWnd,
++		fingerprintProfile: h.fingerprintProfile,
++		df:                 h.ep.pmtud == tcpip.PMTUDiscoveryWant || h.ep.pmtud == tcpip.PMTUDiscoveryDo || h.ep.pmtud == tcpip.PMTUDiscoveryProbe,
++		expOptVal:          h.ep.getExperimentOptionValue(h.ep.route),
+ 	}, synOpts)
+ }
+ 
+@@ -642,15 +671,16 @@ func (h *handshake) retransmitHandlerLocked() tcpip.Error {
+ 	// retransmitted on their own).
+ 	if h.active || !h.acked || h.deferAccept != 0 && e.stack.Clock().NowMonotonic().Sub(h.startTime) > h.deferAccept {
+ 		e.sendSynTCP(e.route, tcpFields{
+-			id:        e.TransportEndpointInfo.ID,
+-			ttl:       calculateTTL(e.route, e.ipv4TTL, e.ipv6HopLimit),
+-			tos:       e.sendTOS,
+-			flags:     h.flags,
+-			seq:       h.iss,
+-			ack:       h.ackNum,
+-			rcvWnd:    h.rcvWnd,
+-			df:        h.ep.pmtud == tcpip.PMTUDiscoveryWant || h.ep.pmtud == tcpip.PMTUDiscoveryDo || h.ep.pmtud == tcpip.PMTUDiscoveryProbe,
+-			expOptVal: e.getExperimentOptionValue(e.route),
++			id:                 e.TransportEndpointInfo.ID,
++			ttl:                calculateTTL(e.route, e.ipv4TTL, e.ipv6HopLimit),
++			tos:                e.sendTOS,
++			flags:              h.flags,
++			seq:                h.iss,
++			ack:                h.ackNum,
++			rcvWnd:             h.rcvWnd,
++			fingerprintProfile: h.fingerprintProfile,
++			df:                 h.ep.pmtud == tcpip.PMTUDiscoveryWant || h.ep.pmtud == tcpip.PMTUDiscoveryDo || h.ep.pmtud == tcpip.PMTUDiscoveryProbe,
++			expOptVal:          e.getExperimentOptionValue(e.route),
+ 		}, h.sendSYNOpts)
+ 		// If we have ever retransmitted the SYN-ACK or
+ 		// SYN segment, we should only measure RTT if
+@@ -665,6 +695,17 @@ func (h *handshake) retransmitHandlerLocked() tcpip.Error {
+ // initializes sender/receiver.
+ // +checklocks:h.ep.mu
+ func (h *handshake) transitionToStateEstablishedLocked(s *segment) {
++	if h.fingerprintProfile != tcpip.TCPFingerprintNative {
++		// Profile SYN windows need not be multiples of the scale. Round up
++		// when buffer space permits, so enabling scaling does not retract
++		// bytes that the unscaled SYN already allowed the peer to send.
++		scale := h.effectiveRcvWndScale()
++		rounded := (h.rcvWnd + (1 << scale) - 1) >> scale << scale
++		if rounded <= seqnum.Size(wndFromSpace(h.ep.receiveBufferAvailable())) {
++			h.rcvWnd = rounded
++		}
++	}
++
+ 	// Stop the SYN retransmissions now that handshake is complete.
+ 	if h.retransmitTimer != nil {
+ 		h.retransmitTimer.stop()
+@@ -769,6 +810,49 @@ func putOptions(options []byte) {
+ 	optionPool.Put(optionsToArray(options))
+ }
+ 
++// makeWindowsSynOptions emits MSS, NOP, WS, NOP, NOP, SACK-permitted.
++// MSS remains route-dependent. Each group is four-byte aligned, so no EOL
++// option is needed. Timestamps are deliberately not offered by this profile.
++func makeWindowsSynOptions(opts header.TCPSynOptions) []byte {
++	options := getOptions()
++	offset := header.EncodeMSSOption(uint32(opts.MSS), options)
++	if opts.WS >= 0 {
++		offset += header.EncodeNOP(options[offset:])
++		offset += header.EncodeWSOption(opts.WS, options[offset:])
++	}
++	if opts.SACKPermitted {
++		offset += header.EncodeNOP(options[offset:])
++		offset += header.EncodeNOP(options[offset:])
++		offset += header.EncodeSACKPermittedOption(options[offset:])
++	}
++	return options[:offset]
++}
++
++// makeMacOSSynOptions places WS before TS/SACK, and pads with EOL bytes.
++// The full profile is 24 bytes: 2-1-3-1-1-8-4-0-0. Unlike NOP padding,
++// the two trailing zero bytes are part of the requested fingerprint.
++func makeMacOSSynOptions(opts header.TCPSynOptions) []byte {
++	options := getOptions()
++	offset := header.EncodeMSSOption(uint32(opts.MSS), options)
++	if opts.WS >= 0 {
++		offset += header.EncodeNOP(options[offset:])
++		offset += header.EncodeWSOption(opts.WS, options[offset:])
++	}
++	if opts.TS {
++		offset += header.EncodeNOP(options[offset:])
++		offset += header.EncodeNOP(options[offset:])
++		offset += header.EncodeTSOption(opts.TSVal, opts.TSEcr, options[offset:])
++	}
++	if opts.SACKPermitted {
++		offset += header.EncodeSACKPermittedOption(options[offset:])
++	}
++	for offset%4 != 0 {
++		options[offset] = header.TCPOptionEOL
++		offset++
++	}
++	return options[:offset]
++}
++
+ func makeSynOptions(opts header.TCPSynOptions) []byte {
+ 	// Emulate linux option order. This is as follows:
+ 	//
+@@ -825,21 +909,29 @@ func makeSynOptions(opts header.TCPSynOptions) []byte {
+ // tcpFields is a struct to carry different parameters required by the
+ // send*TCP variant functions below.
+ type tcpFields struct {
+-	id        stack.TransportEndpointID
+-	ttl       uint8
+-	tos       uint8
+-	flags     header.TCPFlags
+-	seq       seqnum.Value
+-	ack       seqnum.Value
+-	rcvWnd    seqnum.Size
+-	opts      []byte
+-	txHash    uint32
+-	df        bool
+-	expOptVal uint16
++	id                 stack.TransportEndpointID
++	ttl                uint8
++	tos                uint8
++	flags              header.TCPFlags
++	seq                seqnum.Value
++	ack                seqnum.Value
++	rcvWnd             seqnum.Size
++	opts               []byte
++	txHash             uint32
++	df                 bool
++	expOptVal          uint16
++	fingerprintProfile tcpip.TCPFingerprintProfile
+ }
+ 
+ func (e *Endpoint) sendSynTCP(r *stack.Route, tf tcpFields, opts header.TCPSynOptions) tcpip.Error {
+-	tf.opts = makeSynOptions(opts)
++	switch tf.fingerprintProfile {
++	case tcpip.TCPFingerprintWindows:
++		tf.opts = makeWindowsSynOptions(opts)
++	case tcpip.TCPFingerprintMacOS:
++		tf.opts = makeMacOSSynOptions(opts)
++	default:
++		tf.opts = makeSynOptions(opts)
++	}
+ 	// We ignore SYN send errors and let the callers re-attempt send.
+ 	hdrSize := header.TCPMinimumSize + int(r.MaxHeaderLength()) + len(tf.opts)
+ 	if r.NetProto() == header.IPv6ProtocolNumber && tf.expOptVal != 0 {
+diff --git a/pkg/tcpip/transport/tcp/protocol.go b/pkg/tcpip/transport/tcp/protocol.go
+index a3c8295..29b6db1 100644
+--- a/pkg/tcpip/transport/tcp/protocol.go
++++ b/pkg/tcpip/transport/tcp/protocol.go
+@@ -85,6 +85,26 @@ const (
+ 	ccCubic = "cubic"
+ )
+ 
++// DefaultFingerprintProfile is a build-time default. Set with Go -ldflags -X
++// or Bazel x_defs to "windows", "macos", "linux", or "native". Do not mutate
++// it at runtime; use tcpip.TCPFingerprintProfile on the stack instead.
++var DefaultFingerprintProfile = "windows"
++
++func defaultFingerprintProfile() tcpip.TCPFingerprintProfile {
++	switch DefaultFingerprintProfile {
++	case "windows":
++		return tcpip.TCPFingerprintWindows
++	case "macos":
++		return tcpip.TCPFingerprintMacOS
++	case "linux":
++		return tcpip.TCPFingerprintLinux
++	case "native":
++		return tcpip.TCPFingerprintNative
++	default:
++		panic("invalid DefaultFingerprintProfile: " + DefaultFingerprintProfile)
++	}
++}
++
+ // +stateify savable
+ type protocol struct {
+ 	stack *stack.Stack
+@@ -94,6 +114,8 @@ type protocol struct {
+ 	// +checklocks:mu
+ 	sackEnabled bool
+ 	// +checklocks:mu
++	fingerprintProfile tcpip.TCPFingerprintProfile
++	// +checklocks:mu
+ 	recovery tcpip.TCPRecovery
+ 	// +checklocks:mu
+ 	delayEnabled bool
+@@ -281,6 +303,16 @@ func replyWithReset(st *stack.Stack, s *segment, tos, ipv4TTL uint8, ipv6HopLimi
+ // +checklocksexclude:p.mu
+ func (p *protocol) SetOption(option tcpip.SettableTransportProtocolOption) tcpip.Error {
+ 	switch v := option.(type) {
++	case *tcpip.TCPFingerprintProfile:
++		p.mu.Lock()
++		if *v < tcpip.TCPFingerprintNative || *v > tcpip.TCPFingerprintLinux {
++			p.mu.Unlock()
++			return &tcpip.ErrInvalidOptionValue{}
++		}
++		p.fingerprintProfile = *v
++		p.mu.Unlock()
++		return nil
++
+ 	case *tcpip.TCPSACKEnabled:
+ 		p.mu.Lock()
+ 		p.sackEnabled = bool(*v)
+@@ -420,6 +452,12 @@ func (p *protocol) SetOption(option tcpip.SettableTransportProtocolOption) tcpip
+ // +checklocksexclude:p.mu
+ func (p *protocol) Option(option tcpip.GettableTransportProtocolOption) tcpip.Error {
+ 	switch v := option.(type) {
++	case *tcpip.TCPFingerprintProfile:
++		p.mu.RLock()
++		*v = p.fingerprintProfile
++		p.mu.RUnlock()
++		return nil
++
+ 	case *tcpip.TCPSACKEnabled:
+ 		p.mu.RLock()
+ 		*v = tcpip.TCPSACKEnabled(p.sackEnabled)
+@@ -608,6 +646,7 @@ func newProtocol(s *stack.Stack, cc string, probe TCPProbeFunc) stack.TransportP
+ 			Max:     MaxBufferSize,
+ 		},
+ 		sackEnabled:                true,
++		fingerprintProfile:         defaultFingerprintProfile(),
+ 		congestionControl:          cc,
+ 		availableCongestionControl: []string{ccReno, ccCubic},
+ 		moderateReceiveBuffer:      true,
+diff --git a/pkg/tcpip/transport/tcp/test/e2e/BUILD b/pkg/tcpip/transport/tcp/test/e2e/BUILD
+index 87a1ca6..f8b5480 100644
+--- a/pkg/tcpip/transport/tcp/test/e2e/BUILD
++++ b/pkg/tcpip/transport/tcp/test/e2e/BUILD
+@@ -200,3 +200,18 @@ go_test(
+         "//pkg/test/testutil",
+     ],
+ )
++
++go_test(
++    name = "fingerprint_test",
++    size = "small",
++    srcs = ["fingerprint_test.go"],
++    deps = [
++        "//pkg/tcpip",
++        "//pkg/tcpip/faketime",
++        "//pkg/tcpip/header",
++        "//pkg/tcpip/seqnum",
++        "//pkg/tcpip/transport/tcp",
++        "//pkg/tcpip/transport/tcp/testing/context",
++        "//pkg/waiter",
++    ],
++)
+diff --git a/pkg/tcpip/transport/tcp/testing/context/context.go b/pkg/tcpip/transport/tcp/testing/context/context.go
+index 007f9ba..19d7ae2 100644
+--- a/pkg/tcpip/transport/tcp/testing/context/context.go
++++ b/pkg/tcpip/transport/tcp/testing/context/context.go
+@@ -118,6 +118,9 @@ type Headers struct {
+ 
+ // Options contains options for creating a new test context.
+ type Options struct {
++	// UseDefaultTCPFingerprint retains the fork default for profile tests.
++	UseDefaultTCPFingerprint bool
++
+ 	// EnableV4 indicates whether IPv4 should be enabled.
+ 	EnableV4 bool
+ 
+@@ -215,6 +218,13 @@ func NewWithOpts(t *testing.T, opts Options) *Context {
+ 		stackOpts.NetworkProtocols = append(stackOpts.NetworkProtocols, ipv6.NewProtocol)
+ 	}
+ 	s := stack.New(stackOpts)
++	// These fixtures assert upstream Linux handshake behavior.
++	if !opts.UseDefaultTCPFingerprint {
++		fingerprint := tcpip.TCPFingerprintNative
++		if err := s.SetTransportProtocolOption(tcp.ProtocolNumber, &fingerprint); err != nil {
++			t.Fatalf("SetTransportProtocolOption(TCPFingerprintProfile): %s", err)
++		}
++	}
+ 
+ 	const sendBufferSize = 1 << 20 // 1 MiB
+ 	const recvBufferSize = 1 << 20 // 1 MiB
+diff --git a/pkg/tcpip/transport/tcp/test/e2e/fingerprint_test.go b/pkg/tcpip/transport/tcp/test/e2e/fingerprint_test.go
+new file mode 100644
+index 0000000..fb0045b
+--- /dev/null
++++ b/pkg/tcpip/transport/tcp/test/e2e/fingerprint_test.go
+@@ -0,0 +1,259 @@
++// Copyright 2026 The gVisor Authors.
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//     http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++package fingerprint_test
++
++import (
++	"bytes"
++	"encoding/binary"
++	"fmt"
++	"os"
++	"path/filepath"
++	"testing"
++	"time"
++
++	"gvisor.dev/gvisor/pkg/tcpip"
++	"gvisor.dev/gvisor/pkg/tcpip/faketime"
++	"gvisor.dev/gvisor/pkg/tcpip/header"
++	"gvisor.dev/gvisor/pkg/tcpip/seqnum"
++	"gvisor.dev/gvisor/pkg/tcpip/transport/tcp"
++	"gvisor.dev/gvisor/pkg/tcpip/transport/tcp/testing/context"
++	"gvisor.dev/gvisor/pkg/waiter"
++)
++
++// Save actual emitted IP packets for independent tcpdump/Wireshark inspection.
++func saveSYN(t *testing.T, packet []byte, name string) {
++	t.Helper()
++	dir := os.Getenv("TEST_UNDECLARED_OUTPUTS_DIR")
++	if dir == "" {
++		return
++	}
++	var b bytes.Buffer
++	for _, v := range []any{uint32(0xa1b2c3d4), uint16(2), uint16(4), uint32(0), uint32(0), uint32(65535), uint32(101), uint32(0), uint32(0), uint32(len(packet)), uint32(len(packet))} {
++		if err := binary.Write(&b, binary.LittleEndian, v); err != nil {
++			t.Fatal(err)
++		}
++	}
++	b.Write(packet)
++	if err := os.WriteFile(filepath.Join(dir, name+".pcap"), b.Bytes(), 0644); err != nil {
++		t.Fatal(err)
++	}
++}
++
++func TestFingerprintProfiles(t *testing.T) {
++	for _, profile := range []struct {
++		name   string
++		option tcpip.TCPFingerprintProfile
++		window uint16
++		scale  uint8
++		kinds  string
++	}{
++		{"windows", tcpip.TCPFingerprintWindows, 64240, 8, "2-1-3-1-1-4"},
++		{"macos", tcpip.TCPFingerprintMacOS, 65535, 6, "2-1-3-1-1-8-4-0-0"},
++		{"linux", tcpip.TCPFingerprintLinux, 65535, 9, "2-4-8-1-3"},
++	} {
++		for _, v6 := range []bool{false, true} {
++			for _, mtu := range []uint32{1500, 1280} {
++				for _, peerWS := range []int{-1, 0, 7} {
++					for _, peerTS := range []bool{false, true} {
++						name := fmt.Sprintf("%s_v6=%t_mtu=%d_peerWS=%d_peerTS=%t", profile.name, v6, mtu, peerWS, peerTS)
++						t.Run(name, func(t *testing.T) {
++							clock := faketime.NewManualClock()
++							c := context.NewWithOpts(t, context.Options{EnableV4: true, EnableV6: true, MTU: mtu, Clock: clock, UseDefaultTCPFingerprint: true})
++							defer c.Cleanup()
++							var enabled tcpip.TCPFingerprintProfile
++							if err := c.Stack().TransportProtocolOption(tcp.ProtocolNumber, &enabled); err != nil || enabled != tcpip.TCPFingerprintWindows {
++								t.Fatalf("default profile = %v, %v", enabled, err)
++							}
++							if profile.option != tcpip.TCPFingerprintWindows {
++								if err := c.Stack().SetTransportProtocolOption(tcp.ProtocolNumber, &profile.option); err != nil {
++									t.Fatal(err)
++								}
++							}
++							addr := context.TestAddr
++							ipLen := header.IPv4MinimumSize
++							send := c.SendPacket
++							read := func() []byte { v := c.GetPacket(); defer v.Release(); return bytes.Clone(v.AsSlice()) }
++							if v6 {
++								c.CreateV6Endpoint(true)
++								addr = context.TestV6Addr
++								ipLen = header.IPv6MinimumSize
++								send = c.SendV6Packet
++								read = func() []byte { v := c.GetV6Packet(); defer v.Release(); return bytes.Clone(v.AsSlice()) }
++							} else {
++								c.Create(-1)
++							}
++							if _, ok := c.EP.Connect(tcpip.FullAddress{Addr: addr, Port: context.TestPort}).(*tcpip.ErrConnectStarted); !ok {
++								t.Fatal("Connect did not start")
++							}
++							packet := read()
++							syn := header.TCP(packet[ipLen:])
++							mss := uint16(mtu) - uint16(ipLen) - header.TCPMinimumSize
++							wantOpts := []byte{2, 4, byte(mss >> 8), byte(mss), 1, 3, 3, 8, 1, 1, 4, 2}
++							actualOpts := bytes.Clone(syn.Options())
++							switch profile.option {
++							case tcpip.TCPFingerprintMacOS:
++								wantOpts = []byte{2, 4, byte(mss >> 8), byte(mss), 1, 3, 3, 6, 1, 1, 8, 10, 0, 0, 0, 0, 0, 0, 0, 0, 4, 2, 0, 0}
++								if len(actualOpts) == 24 {
++									clear(actualOpts[12:20])
++								}
++							case tcpip.TCPFingerprintLinux:
++								wantOpts = []byte{2, 4, byte(mss >> 8), byte(mss), 4, 2, 8, 10, 0, 0, 0, 0, 0, 0, 0, 0, 1, 3, 3, 9}
++								if len(actualOpts) == 20 {
++									clear(actualOpts[8:16])
++								}
++							}
++							if syn.Flags() != header.TCPFlagSyn || syn.WindowSize() != profile.window || !bytes.Equal(actualOpts, wantOpts) {
++								t.Fatalf("SYN flags=%v window=%d options=%x, want SYN/%d/%x", syn.Flags(), syn.WindowSize(), syn.Options(), profile.window, wantOpts)
++							}
++							t.Logf("JA4T=%d_%s_%d_%d", profile.window, profile.kinds, mss, profile.scale)
++							saveSYN(t, packet, name)
++							// The setting is sampled once; changing it cannot corrupt a retry.
++							disabled := tcpip.TCPFingerprintNative
++							if err := c.Stack().SetTransportProtocolOption(tcp.ProtocolNumber, &disabled); err != nil {
++								t.Fatal(err)
++							}
++							clock.Advance(tcp.InitialRTO)
++							retry := header.TCP(read()[ipLen:])
++							if retry.SequenceNumber() != syn.SequenceNumber() || retry.WindowSize() != syn.WindowSize() || !bytes.Equal(retry.Options(), syn.Options()) {
++								t.Fatalf("retransmitted SYN changed: %x", []byte(retry))
++							}
++							opts := make([]byte, 40)
++							n := header.EncodeMSSOption(uint32(mss), opts)
++							n += header.EncodeSACKPermittedOption(opts[n:])
++							if peerWS >= 0 {
++								n += header.EncodeWSOption(peerWS, opts[n:])
++							}
++							if peerTS {
++								n += header.EncodeTSOption(123, header.ParseSynOptions(syn.Options(), false).TSVal, opts[n:])
++							}
++							n += header.AddTCPOptionPadding(opts, n)
++							const peerISN = 1000
++							h := context.Headers{SrcPort: context.TestPort, DstPort: syn.SourcePort(), SeqNum: peerISN, AckNum: seqnum.Value(syn.SequenceNumber() + 1), Flags: header.TCPFlagSyn | header.TCPFlagAck, RcvWnd: 30000, TCPOpts: opts[:n]}
++							send(nil, &h)
++							ack := header.TCP(read()[ipLen:])
++							wantWindow := profile.window
++							if peerWS >= 0 {
++								wantWindow = uint16((uint32(profile.window) + (1 << profile.scale) - 1) >> profile.scale)
++							}
++							if ack.Flags() != header.TCPFlagAck || ack.AckNumber() != peerISN+1 || header.ParseTCPOptions(ack.Options()).TS != (peerTS && profile.option != tcpip.TCPFingerprintWindows) || ack.WindowSize() != wantWindow {
++								t.Fatalf("handshake ACK flags=%v ack=%d window=%d options=%x; want window=%d", ack.Flags(), ack.AckNumber(), ack.WindowSize(), ack.Options(), wantWindow)
++							}
++							// Data in both directions must honor the negotiated TS state,
++							// including unsolicited timestamps sent to the Windows profile.
++							payload := []byte("fingerprint round trip")
++							if n, err := c.EP.Write(bytes.NewReader(payload), tcpip.WriteOptions{}); err != nil || n != int64(len(payload)) {
++								t.Fatalf("Write = %d, %v", n, err)
++							}
++							data := header.TCP(read()[ipLen:])
++							if !bytes.Equal(data.Payload(), payload) || header.ParseTCPOptions(data.Options()).TS != (peerTS && profile.option != tcpip.TCPFingerprintWindows) {
++								t.Fatalf("outbound data/options = %x/%x", data.Payload(), data.Options())
++							}
++							we, ch := waiter.NewChannelEntry(waiter.ReadableEvents)
++							c.WQ.EventRegister(&we)
++							defer c.WQ.EventUnregister(&we)
++							h.SeqNum = peerISN + 1
++							h.AckNum += seqnum.Value(len(payload))
++							h.Flags = header.TCPFlagAck | header.TCPFlagPsh
++							h.TCPOpts = nil
++							if peerTS && profile.option != tcpip.TCPFingerprintWindows {
++								ts := make([]byte, 12)
++								ts[0], ts[1] = 1, 1
++								header.EncodeTSOption(124, header.ParseTCPOptions(data.Options()).TSVal, ts[2:])
++								h.TCPOpts = ts
++							}
++							send(payload, &h)
++							select {
++							case <-ch:
++							case <-time.After(5 * time.Second):
++								t.Fatal("inbound data was not delivered")
++							}
++							var received bytes.Buffer
++							if _, err := c.EP.Read(&received, tcpip.ReadOptions{}); err != nil || !bytes.Equal(received.Bytes(), payload) {
++								t.Fatalf("Read = %q, %v", received.Bytes(), err)
++							}
++						})
++					}
++				}
++			}
++		}
++	}
++
++}
++
++func TestWindowsFingerprintSmallBufferAndSACKDisabled(t *testing.T) {
++	c := context.NewWithOpts(t, context.Options{EnableV4: true, MTU: 1500, UseDefaultTCPFingerprint: true})
++	defer c.Cleanup()
++	disabled := tcpip.TCPSACKEnabled(false)
++	if err := c.Stack().SetTransportProtocolOption(tcp.ProtocolNumber, &disabled); err != nil {
++		t.Fatal(err)
++	}
++	c.Create(4096)
++	if _, ok := c.EP.Connect(tcpip.FullAddress{Addr: context.TestAddr, Port: context.TestPort}).(*tcpip.ErrConnectStarted); !ok {
++		t.Fatal("Connect did not start")
++	}
++	v := c.GetPacket()
++	defer v.Release()
++	syn := header.TCP(header.IPv4(v.AsSlice()).Payload())
++	if syn.WindowSize() != 4096 || !bytes.Equal(syn.Options(), []byte{2, 4, 5, 180, 1, 3, 3, 8}) {
++		t.Fatalf("small buffer SYN window=%d options=%x", syn.WindowSize(), syn.Options())
++	}
++}
++
++func TestFingerprintPassiveOpen(t *testing.T) {
++	for _, profile := range []tcpip.TCPFingerprintProfile{tcpip.TCPFingerprintWindows, tcpip.TCPFingerprintMacOS, tcpip.TCPFingerprintLinux} {
++		t.Run(fmt.Sprint(profile), func(t *testing.T) {
++			c := context.NewWithOpts(t, context.Options{EnableV4: true, MTU: 1500, UseDefaultTCPFingerprint: true})
++			defer c.Cleanup()
++			if err := c.Stack().SetTransportProtocolOption(tcp.ProtocolNumber, &profile); err != nil {
++				t.Fatal(err)
++			}
++			// The fixture checks the upstream receive scale and TS/SACK negotiation.
++			c.AcceptWithOptionsNoDelay(int(c.WindowScale), header.TCPSynOptions{MSS: 1460, WS: 3, TS: true, TSVal: 123, SACKPermitted: true})
++		})
++	}
++}
++
++func TestFingerprintUserMSSAndInvalidOption(t *testing.T) {
++	for _, profile := range []tcpip.TCPFingerprintProfile{tcpip.TCPFingerprintWindows, tcpip.TCPFingerprintMacOS, tcpip.TCPFingerprintLinux} {
++		t.Run(fmt.Sprint(profile), func(t *testing.T) {
++			c := context.NewWithOpts(t, context.Options{EnableV4: true, MTU: 1500, UseDefaultTCPFingerprint: true})
++			defer c.Cleanup()
++			if err := c.Stack().SetTransportProtocolOption(tcp.ProtocolNumber, &profile); err != nil {
++				t.Fatal(err)
++			}
++			invalid := tcpip.TCPFingerprintProfile(99)
++			if _, ok := c.Stack().SetTransportProtocolOption(tcp.ProtocolNumber, &invalid).(*tcpip.ErrInvalidOptionValue); !ok {
++				t.Fatal("invalid profile accepted")
++			}
++			var got tcpip.TCPFingerprintProfile
++			if err := c.Stack().TransportProtocolOption(tcp.ProtocolNumber, &got); err != nil || got != profile {
++				t.Fatalf("profile changed after invalid option: %d, %v", got, err)
++			}
++			c.Create(-1)
++			if err := c.EP.SetSockOptInt(tcpip.MaxSegOption, 1200); err != nil {
++				t.Fatal(err)
++			}
++			if _, ok := c.EP.Connect(tcpip.FullAddress{Addr: context.TestAddr, Port: context.TestPort}).(*tcpip.ErrConnectStarted); !ok {
++				t.Fatal("Connect did not start")
++			}
++			v := c.GetPacket()
++			defer v.Release()
++			syn := header.TCP(header.IPv4(v.AsSlice()).Payload())
++			if opts := header.ParseSynOptions(syn.Options(), false); opts.MSS != 1200 {
++				t.Fatalf("MSS=%d, want 1200", opts.MSS)
++			}
++		})
++	}
++}

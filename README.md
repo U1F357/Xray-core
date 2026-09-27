@@ -1,249 +1,121 @@
-# Project X
+# Xray-core：TCP 指纹可选 / 自动匹配版本
 
-[Project X](https://github.com/XTLS) originates from XTLS protocol, providing a set of network tools such as [Xray-core](https://github.com/XTLS/Xray-core) and [REALITY](https://github.com/XTLS/REALITY).
+**本 fork 的全部自定义修改、gVisor 集成、测试、文档和 GitHub Actions 工作流，完全由 AI（OpenAI Codex）实现。**
+**All custom changes in this fork were implemented entirely by AI (OpenAI Codex).**
+原始 Xray-core、gVisor 及第三方依赖由各自上游作者开发；上述声明仅指本 fork 的新增修改。
+本项目不是 XTLS 官方发行版。保留上游许可证和作者声明。
 
-[README](https://github.com/XTLS/Xray-core#readme) is open, so feel free to submit your project [here](https://github.com/XTLS/Xray-core/pulls).
+基于 [XTLS/Xray-core](https://github.com/XTLS/Xray-core) 的
+`3519dfecbd65022ba71d9bc73e94063d0cbc8636`，将自定义 gVisor TCP/IP 栈集成到 freedom 出站。
+[下载 Release](https://github.com/U1F357/Xray-core/releases) · [详细使用说明](README.tcp-fingerprint.zh-CN.md) · [上游 README](README.upstream.md)
 
-## Sponsors
+## 做了哪些修改
 
-[![Remnawave](https://github.com/user-attachments/assets/a22d34ae-01ee-441c-843a-85356748ed1e)](https://docs.rw)
+- freedom 增加 `tcpFingerprint`：支持 `windows`、`macos`、`linux`、`auto`。
+- 自定义 gVisor 控制 TCP SYN 的初始窗口、选项顺序及窗口缩放；三种模板使用独立栈。
+- `auto` 通过 Linux `TCP_SAVE_SYN` / `TCP_SAVED_SYN` 获取入站 SYN、进行保守分类，
+  随会话传递给 freedom；Mux 逻辑流继承物理连接类别。
+- 自动准备内部 TUN、路由、nftables NAT 和必要的接口转发设置，退出时清理；
+  无需手工配置网络，也不需要安装 runsc 或运行 gVisor 容器。
+- INFO 日志显示入站识别类别、freedom 所选模板以及是否使用备用类别。
+- 不配置指纹时仍使用原生 freedom；UDP 保留原有路径。现有 WireGuard/TUN 入站显式使用
+  gVisor native profile，避免被自定义默认模板影响。
+- 修改过的网络栈源码包含在 `third_party/gvisor`，可独立克隆构建。
+  上游通用工作流归档在 `docs/upstream-workflows`，本 fork 使用专用 Linux amd64 发布流程。
 
-[![Happ](https://github.com/user-attachments/assets/14055dab-e8bb-48bd-89e8-962709e4098e)](https://happ.su)
+| 设置 | SYN 指纹模板 |
+| --- | --- |
+| `windows` | `64240_2-1-3-1-1-4_*_8` |
+| `macos` | `65535_2-1-3-1-1-8-4-0-0_*_6` |
+| `linux` | `65535_2-4-8-1-3_*_9` |
 
-[![BlancVPN](https://github.com/user-attachments/assets/9145ea7d-5da3-446e-8143-710dba4292c3)](https://blanc.link/VMTSDqW)
+`*` 是根据出站链路确定的 MSS。MTU 1500 时实测 MSS 为 1460。
+这些名称代表指纹模板，不是对真实操作系统身份的保证。
 
-[**Sponsor Xray-core**](https://github.com/XTLS/Xray-core/issues/3668)
+## 使用
 
-## Donation & NFTs
+当前发行包仅支持 **Linux amd64、IPv4 出站**。需要 root、可用的 `/dev/net/tun`、
+网络管理权限，以及内核 nftables/NAT/conntrack 支持。普通宿主 Linux 可直接运行；
+受限制容器或 VPS 可能需要宿主授予相应能力。运行时不调用 ip/nft/iptables 命令。
 
-### [Collect a Project X NFT to support the development of Project X!](https://opensea.io/item/ethereum/0x5ee362866001613093361eb8569d59c4141b76d1/1)
-
-[<img alt="Project X NFT" width="150px" src="https://raw2.seadn.io/ethereum/0x5ee362866001613093361eb8569d59c4141b76d1/7fa9ce900fb39b44226348db330e32/8b7fa9ce900fb39b44226348db330e32.svg" />](https://opensea.io/item/ethereum/0x5ee362866001613093361eb8569d59c4141b76d1/1)
-
-- **TRX(Tron)/USDT/USDC: `TNrDh5VSfwd4RPrwsohr6poyNTfFefNYan`**
-- **TON: `UQApeV-u2gm43aC1uP76xAC1m6vCylstaN1gpfBmre_5IyTH`**
-- **BTC: `1JpqcziZZuqv3QQJhZGNGBVdCBrGgkL6cT`**
-- **XMR: `4ABHQZ3yJZkBnLoqiKvb3f8eqUnX4iMPb6wdant5ZLGQELctcerceSGEfJnoCk6nnyRZm73wrwSgvZ2WmjYLng6R7sR67nq`**
-- **SOL/USDT/USDC: `3x5NuXHzB5APG6vRinPZcsUv5ukWUY1tBGRSJiEJWtZa`**
-- **ETH/USDT/USDC: `0xDc3Fe44F0f25D13CACb1C4896CD0D321df3146Ee`**
-- **Project X NFT: https://opensea.io/item/ethereum/0x5ee362866001613093361eb8569d59c4141b76d1/1**
-- **VLESS NFT: https://opensea.io/collection/vless**
-- **REALITY NFT: https://opensea.io/item/ethereum/0x5ee362866001613093361eb8569d59c4141b76d1/2**
-- **Related links: [VLESS Post-Quantum Encryption](https://github.com/XTLS/Xray-core/pull/5067), [XHTTP: Beyond REALITY](https://github.com/XTLS/Xray-core/discussions/4113), [Announcement of NFTs by Project X](https://github.com/XTLS/Xray-core/discussions/3633)**
-
-## License
-
-[Mozilla Public License Version 2.0](https://github.com/XTLS/Xray-core/blob/main/LICENSE)
-
-## Documentation
-
-[Project X Official Website](https://xtls.github.io)
-
-## Telegram
-
-[Project X](https://t.me/projectXray)
-
-[Project X Channel](https://t.me/projectXtls)
-
-[Project VLESS](https://t.me/projectVless) (Русский)
-
-[Project XHTTP](https://t.me/projectXhttp) (Persian)
-
-## Installation
-
-- Linux Script
-  - [XTLS/Xray-install](https://github.com/XTLS/Xray-install) (**Official**)
-  - [tempest](https://github.com/team-cloudchaser/tempest) (supports [`systemd`](https://systemd.io) and [OpenRC](https://github.com/OpenRC/openrc); Linux-only)
-- Docker
-  - [ghcr.io/xtls/xray-core](https://ghcr.io/xtls/xray-core) (**Official**)
-  - [teddysun/xray](https://hub.docker.com/r/teddysun/xray)
-  - [wulabing/xray_docker](https://github.com/wulabing/xray_docker)
-- Web Panel
-  - [Remnawave](https://github.com/remnawave/panel)
-  - [3X-UI](https://github.com/MHSanaei/3x-ui)
-  - [PasarGuard](https://github.com/PasarGuard/panel)
-  - [Xray-UI](https://github.com/qist/xray-ui)
-  - [X-Panel](https://github.com/xeefei/X-Panel)
-  - [Marzban](https://github.com/Gozargah/Marzban)
-  - [Hiddify](https://github.com/hiddify/Hiddify-Manager)
-  - [TX-UI](https://github.com/AghayeCoder/tx-ui)
-  - [CELERITY](https://github.com/ClickDevTech/CELERITY-panel)
-- One Click
-  - [Xray-REALITY](https://github.com/zxcvos/Xray-script), [xray-reality](https://github.com/sajjaddg/xray-reality), [reality-ezpz](https://github.com/aleskxyz/reality-ezpz)
-  - [Xray_bash_onekey](https://github.com/hello-yunshu/Xray_bash_onekey), [XTool](https://github.com/LordPenguin666/XTool), [VPainLess](https://github.com/vpainless/vpainless)
-  - [v2ray-agent](https://github.com/mack-a/v2ray-agent), [Xray_onekey](https://github.com/wulabing/Xray_onekey), [ProxySU](https://github.com/proxysu/ProxySU)
-- Magisk
-  - [Magic_V2Ray](https://github.com/vincentng295/Magic_V2Ray)
-  - [Xray_For_Magisk](https://github.com/E7KMbb/Xray_For_Magisk)
-- Homebrew
-  - `brew install xray`
-
-## Usage
-
-- Example
-  - [VLESS-XTLS-uTLS-REALITY](https://github.com/XTLS/REALITY#readme)
-  - [VLESS-TCP-XTLS-Vision](https://github.com/XTLS/Xray-examples/tree/main/VLESS-TCP-XTLS-Vision)
-  - [All-in-One-fallbacks-Nginx](https://github.com/XTLS/Xray-examples/tree/main/All-in-One-fallbacks-Nginx)
-- Xray-examples
-  - [XTLS/Xray-examples](https://github.com/XTLS/Xray-examples)
-  - [chika0801/Xray-examples](https://github.com/chika0801/Xray-examples)
-  - [lxhao61/integrated-examples](https://github.com/lxhao61/integrated-examples)
-- Tutorial
-  - [XTLS Vision](https://github.com/chika0801/Xray-install)
-  - [REALITY (English)](https://cscot.pages.dev/2023/03/02/Xray-REALITY-tutorial/)
-  - [XTLS-Iran-Reality (English)](https://github.com/SasukeFreestyle/XTLS-Iran-Reality)
-  - [Xray REALITY with 'steal oneself' (English)](https://computerscot.github.io/vless-xtls-utls-reality-steal-oneself.html)
-  - [Xray with WireGuard inbound (English)](https://g800.pages.dev/wireguard)
-
-## GUI Clients
-
-- OpenWrt
-  - [PassWall](https://github.com/Openwrt-Passwall/openwrt-passwall), [PassWall 2](https://github.com/Openwrt-Passwall/openwrt-passwall2)
-  - [ShadowSocksR Plus+](https://github.com/fw876/helloworld)
-  - [luci-app-xray](https://github.com/yichya/luci-app-xray) ([openwrt-xray](https://github.com/yichya/openwrt-xray))
-- Asuswrt-Merlin
-  - [XRAYUI](https://github.com/DanielLavrushin/asuswrt-merlin-xrayui)
-  - [fancyss](https://github.com/hq450/fancyss)
-- Windows
-  - [v2rayN](https://github.com/2dust/v2rayN)
-  - [Furious](https://github.com/LorenEteval/Furious)
-  - [Invisible Man - Xray](https://github.com/InvisibleManVPN/InvisibleMan-XRayClient)
-  - [AnyPortal](https://github.com/AnyPortal/AnyPortal)
-  - [GenyConnect](https://github.com/genyleap/GenyConnect)
-  - [OneXray](https://github.com/OneXray/OneXray)
-  - [XrayUI-dev](https://github.com/PhoenixNil/XrayUI-dev)
-- Android
-  - [v2rayNG](https://github.com/2dust/v2rayNG)
-  - [X-flutter](https://github.com/XTLS/X-flutter)
-  - [SaeedDev94/Xray](https://github.com/SaeedDev94/Xray)
-  - [SimpleXray](https://github.com/lhear/SimpleXray)
-  - [XrayFA](https://github.com/Q7DF1/XrayFA)
-  - [AnyPortal](https://github.com/AnyPortal/AnyPortal)
-  - [OneXray](https://github.com/OneXray/OneXray)
-  - [AsteriskNG](https://github.com/Asterisk4Magisk/AsteriskNG)
-- iOS & macOS arm64 & tvOS
-  - [Happ](https://apps.apple.com/app/happ-proxy-utility/id6504287215) | [Happ RU](https://apps.apple.com/ru/app/happ-proxy-utility-plus/id6746188973) | [Happ tvOS](https://apps.apple.com/us/app/happ-proxy-utility-for-tv/id6748297274)
-  - [Streisand](https://apps.apple.com/app/streisand/id6450534064)
-  - [OneXray](https://github.com/OneXray/OneXray)
-  - [INCY](https://apps.apple.com/en/app/incy/id6756943388)
-- macOS arm64 & x64
-  - [Happ](https://apps.apple.com/app/happ-proxy-utility/id6504287215) | [Happ RU](https://apps.apple.com/ru/app/happ-proxy-utility-plus/id6746188973)
-  - [V2rayU](https://github.com/yanue/V2rayU)
-  - [V2RayXS](https://github.com/tzmax/V2RayXS)
-  - [Furious](https://github.com/LorenEteval/Furious)
-  - [OneXray](https://github.com/OneXray/OneXray)
-  - [GoXRay](https://github.com/goxray/desktop)
-  - [AnyPortal](https://github.com/AnyPortal/AnyPortal)
-  - [v2rayN](https://github.com/2dust/v2rayN)
-  - [GenyConnect](https://github.com/genyleap/GenyConnect)
-  - [INCY](https://apps.apple.com/en/app/incy/id6756943388)
-- Linux
-  - [v2rayA](https://github.com/v2rayA/v2rayA)
-  - [Furious](https://github.com/LorenEteval/Furious)
-  - [GorzRay](https://github.com/ketetefid/GorzRay)
-  - [GoXRay](https://github.com/goxray/desktop)
-  - [AnyPortal](https://github.com/AnyPortal/AnyPortal)
-  - [v2rayN](https://github.com/2dust/v2rayN)
-  - [GenyConnect](https://github.com/genyleap/GenyConnect)
-  - [OneXray](https://github.com/OneXray/OneXray)
-- HarmonyOS
-  - [Hey](https://github.com/popsiclelmlm/Hey)
-
-## Others that support VLESS, XTLS, REALITY, XUDP, PLUX...
-
-- iOS & macOS arm64 & tvOS
-  - [Anywhere](https://github.com/NodePassProject/Anywhere)
-  - [Shadowrocket](https://apps.apple.com/app/shadowrocket/id932747118)
-  - [Loon](https://apps.apple.com/us/app/loon/id1373567447)
-  - [Egern](https://apps.apple.com/us/app/egern/id1616105820)
-  - [Quantumult X](https://apps.apple.com/us/app/quantumult-x/id1443988620)
-- Xray Tools
-  - [xray-knife](https://github.com/lilendian0x00/xray-knife)
-  - [xray-checker](https://github.com/kutovoys/xray-checker)
-- Xray Wrapper
-  - [XTLS/libXray](https://github.com/XTLS/libXray)
-  - [xtls-sdk](https://github.com/remnawave/xtls-sdk)
-  - [xtlsapi](https://github.com/hiddify/xtlsapi)
-  - [AndroidLibXrayLite](https://github.com/2dust/AndroidLibXrayLite)
-  - [flutter_vless](https://github.com/XIIIFOX/flutter_vless)
-  - [Xray-core-python](https://github.com/LorenEteval/Xray-core-python)
-  - [xray-api](https://github.com/XVGuardian/xray-api)
-- [XrayR](https://github.com/XrayR-project/XrayR)
-  - [XrayR-release](https://github.com/XrayR-project/XrayR-release)
-  - [XrayR-V2Board](https://github.com/missuo/XrayR-V2Board)
-- Cores
-  - [Amnezia VPN](https://github.com/amnezia-vpn)
-  - [mihomo](https://github.com/MetaCubeX/mihomo)
-  - [sing-box](https://github.com/SagerNet/sing-box)
-
-## Contributing
-
-[Code of Conduct](https://github.com/XTLS/Xray-core/blob/main/CODE_OF_CONDUCT.md)
-
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/XTLS/Xray-core)
-
-## Credits
-
-- [Xray-core v1.0.0](https://github.com/XTLS/Xray-core/releases/tag/v1.0.0) was forked from [v2fly-core 9a03cc5](https://github.com/v2fly/v2ray-core/commit/9a03cc5c98d04cc28320fcee26dbc236b3291256), and we have made & accumulated a huge number of enhancements over time, check [the release notes for each version](https://github.com/XTLS/Xray-core/releases).
-- For third-party projects used in [Xray-core](https://github.com/XTLS/Xray-core), check your local or [the latest go.mod](https://github.com/XTLS/Xray-core/blob/main/go.mod).
-
-### Bundled Third-Party Components Redistribution
-
-**Certain optional features dynamically load third-party components. These optional components are separate works distributed under their own licenses, and are bundled into the ZIP package for ease of use. Users may replace these components under the licenses from these components.**
-
-These components include:
-
-#### Wintun
-
-This distribution contains unmodified official precompiled and pre-signed Wintun binaries.
-
-- Project: Wintun
-- Copyright: Copyright (C) 2018-2021 WireGuard LLC. All Rights Reserved.
-- Redistribution License: Prebuilt Binaries License (PBL) bundled with official precompiled and pre-signed binaries from wintun.net
-- Component(s): wintun.dll
-- Source: https://www.wintun.net/
-- Included in:
-  - Windows x86 (windows-32, win7-32)
-  - Windows x86-64 (windows-64, win7-64)
-  - Windows AArch64 (windows-arm64)
-- Notes: Wintun is an optional runtime-loaded component only used for TUN inbound functionality on supported Windows platforms.
-
-## One-line Compilation
-
-### Windows (PowerShell)
-
-```powershell
-$env:CGO_ENABLED=0
-go build -o xray.exe -trimpath -buildvcs=false -ldflags="-s -w -buildid=" -v ./main
-```
-
-### Linux / macOS
+下载 `xray-fingerprint-linux-amd64.tar.gz` 和 `SHA256SUMS`，核验并解压：
 
 ```bash
-CGO_ENABLED=0 go build -o xray -trimpath -buildvcs=false -ldflags="-s -w -buildid=" -v ./main
+sha256sum --ignore-missing -c SHA256SUMS
+tar -xzf xray-fingerprint-linux-amd64.tar.gz
+sudo ./xray-fingerprint run -config example-auto.json
 ```
 
-### Reproducible Releases
+示例监听 `127.0.0.1:1080` SOCKS；部署代理服务器时，请在自己的入站配置中配置认证，
+并将其出站改为以下 freedom 设置。
 
-Make sure that you are using the same Go version, and remember to set the git commit id (7 bytes):
+自动匹配入站类别：
+
+```json
+{
+  "log": { "loglevel": "info" },
+  "outbounds": [{
+    "protocol": "freedom",
+    "settings": {
+      "tcpFingerprint": "auto",
+      "tcpFingerprintFallback": "linux"
+    }
+  }]
+}
+```
+
+上面是用于合并进现有配置的片段；完整可运行配置见 `example-auto.json`。
+无法识别或读取 SYN 时使用 `tcpFingerprintFallback`，可选三种模板，默认 `linux`。
+固定指纹只需将 settings 改为 `{"tcpFingerprint":"windows"}`，并删除 fallback 设置。
+`example.json` 是固定 Windows 模板的完整示例。
+自动网络模式不需要 `tcpFingerprintSettings`；该字段仅用于手动配置的 TUN，不能与 `auto` 同用。
+
+日志级别设为 `info` 或 `debug` 后可看到：
+
+```text
+TCP fingerprint inbound: detected=windows peer=...
+TCP fingerprint freedom: mode=auto detected=windows selected=windows fallback=false template=64240_2-1-3-1-1-4_*_8 dialing=tcp:...
+TCP fingerprint freedom: mode=auto detected=unknown selected=linux fallback=true template=65535_2-4-8-1-3_*_9 dialing=tcp:...
+```
+
+日志带会话 ID；`dialing` 表示拨号尝试，连接结果看后续成功/失败日志。
+
+## 识别范围与限制
+
+- 分类匹配 TCP options 顺序，允许正常变化的 MSS、初始窗口和合法缩放值；
+  正常 MTU 变化通常不影响分类。未知排列使用备用模板，不会复制任意客户端指纹。
+- 当前自动采集覆盖 TCP/raw 传输入站及其 TLS/REALITY 包装；已实测 VLESS TCP、TLS 和 Mux。
+  WebSocket、XHTTP、QUIC、Unix socket、PROXY protocol 等无法取得 SYN 的路径使用备用类别。
+- 识别的是直接建立 TCP 的最后一跳；CDN/代理如果重建连接，观察到的是中转栈。
+  多个用户共用同一条物理 TCP 连接时，不能分别识别原始用户的系统。
+- freedom 指纹出站不支持链式 dialerProxy、sendThrough、transport TLS/REALITY、
+  出站 mux、finalmask、TCP transport headers 或多数自定义 sockopt；连接中的 HTTPS 负载不受影响。
+- 不修改整机默认路由或全局 IPv4 forwarding。会暂时管理相关接口的转发设置及专属规则。
+  正常退出和仅主进程被杀均有清理机制；主进程及管理子进程全被强杀时，部分规则可能
+  留到下次启动按记录恢复。防火墙服务重载等环境变化需配合重启。
+- 未完成完整 WireGuard 隧道回归和吞吐基准测试。完整边界见[详细说明](README.tcp-fingerprint.zh-CN.md)。
+
+## 构建与发布
+
+需要 Go 1.27。网络栈源码和生成后的 protobuf 均已包含，不需要 Bazel 或 protoc：
 
 ```bash
-CGO_ENABLED=0 go build -o xray -trimpath -buildvcs=false -gcflags="all=-l=4" -ldflags="-X github.com/xtls/xray-core/core.build=REPLACE -s -w -buildid=" -v ./main
+git clone https://github.com/U1F357/Xray-core.git
+cd Xray-core
+bash scripts/build-fingerprint-release.sh
 ```
 
-For Android:
+输出在 `dist/`。GitHub Actions 会运行相关测试、编译静态二进制并进行隔离网络抓包测试。
+推送 `fp-v*` 标签会在成功后创建 GitHub Release，附带二进制、压缩包和 SHA256 校验文件；
+普通分支推送和手动触发仅构建测试，不发布。
 
-```bash
-GOOS=android GOARCH=arm64 CGO_ENABLED=1 CC=/path/to/aarch64-linux-android24-clang go build -o xray -trimpath -buildvcs=false -gcflags="all=-l=4" -ldflags="-X github.com/xtls/xray-core/core.build=REPLACE -s -w -buildid= -checklinkname=0" -v ./main
-GOOS=android GOARCH=amd64 CGO_ENABLED=1 CC=/path/to/x86_64-linux-android24-clang go build -o xray -trimpath -buildvcs=false -gcflags="all=-l=4" -ldflags="-X github.com/xtls/xray-core/core.build=REPLACE -s -w -buildid= -checklinkname=0" -v ./main
-```
+本地已用三种定制 runsc 沙箱运行 Xray 客户端，验证服务端自动匹配、TLS、Mux、
+并发与备用路径，并对入站/出站 SYN 抓包核对。此完整沙箱测试需要额外的三种 runsc
+运行时，未包含在本仓库或 Release 中；复现步骤见详细说明。
 
-If you are compiling a 32-bit MIPS/MIPSLE target, use this command instead:
+## 来源与许可证
 
-```bash
-CGO_ENABLED=0 go build -o xray -trimpath -buildvcs=false -gcflags="-l=4" -ldflags="-X github.com/xtls/xray-core/core.build=REPLACE -s -w -buildid=" -v ./main
-```
-
-## Stargazers over time
-
-[![Stargazers over time](https://starchart.cc/XTLS/Xray-core.svg)](https://starchart.cc/XTLS/Xray-core)
+- Xray-core：[MPL-2.0](LICENSE)，原始作者信息见上游文件。
+- 提取的 gVisor：[Apache-2.0](third_party/gvisor/LICENSE)，提交
+  `95eb5d5930b0e7736826cc2cb949ba9d2c4d5d29`，保留 [AUTHORS](third_party/gvisor/AUTHORS)。
+- gVisor 自定义 TCP 修改的源补丁见 [third_party/gvisor-tcp-fingerprints.patch](third_party/gvisor-tcp-fingerprints.patch)。

@@ -212,6 +212,11 @@ func createStack(ep stack.LinkEndpoint) (*stack.Stack, error) {
 		HandleLocal:        false,
 	}
 	gStack := stack.New(opts)
+	nativeProfile := tcpip.TCPFingerprintNative
+	if err := gStack.SetTransportProtocolOption(tcp.ProtocolNumber, &nativeProfile); err != nil {
+		gStack.Close()
+		return nil, errors.New(err.String())
+	}
 
 	err := gStack.CreateNIC(defaultNIC, ep)
 	if err != nil {

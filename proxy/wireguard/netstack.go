@@ -66,6 +66,12 @@ func CreateNetTUN(localAddresses, dnsServers []netip.Addr, mtu int, handleLocal 
 		mtu:            mtu,
 	}
 	sackEnabledOpt := tcpip.TCPSACKEnabled(true) // TCP SACK is disabled by default
+	// The custom netstack defaults to Windows; keep existing WireGuard behavior.
+	nativeProfile := tcpip.TCPFingerprintNative
+	if err := dev.stack.SetTransportProtocolOption(tcp.ProtocolNumber, &nativeProfile); err != nil {
+		dev.stack.Close()
+		return nil, nil, nil, fmt.Errorf("native TCP profile: %v", err)
+	}
 	tcpipErr := dev.stack.SetTransportProtocolOption(tcp.ProtocolNumber, &sackEnabledOpt)
 	if tcpipErr != nil {
 		return nil, nil, nil, fmt.Errorf("could not enable TCP SACK: %v", tcpipErr)

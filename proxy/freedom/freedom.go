@@ -53,6 +53,13 @@ func reloadEnvSettings() error {
 func init() {
 	common.Must(common.RegisterConfig((*Config)(nil), func(ctx context.Context, config interface{}) (interface{}, error) {
 		h := new(Handler)
+		if config.(*Config).TcpFingerprint != "" {
+			if stream, ok := session.StreamSettingsFromContext(ctx).(*internet.MemoryStreamConfig); ok {
+				if err := validateFingerprintStream(stream); err != nil {
+					return nil, err
+				}
+			}
+		}
 		if streamSettings, ok := session.StreamSettingsFromContext(ctx).(*internet.MemoryStreamConfig); ok && streamSettings.SocketSettings != nil {
 			h.resolveStrategy = streamSettings.SocketSettings.DomainStrategy
 			h.usesDialerProxy = len(streamSettings.SocketSettings.DialerProxy) > 0
@@ -98,6 +105,7 @@ type Handler struct {
 	finalRules      []*FinalRule
 	resolveStrategy internet.DomainStrategy
 	usesDialerProxy bool
+	fingerprint     fingerprintDialer
 }
 
 func buildFinalRule(config *FinalRuleConfig) (*FinalRule, error) {
@@ -188,6 +196,12 @@ func (h *Handler) matchFinalRule(network net.Network, address net.Address, port 
 
 // Init initializes the Handler with necessary parameters.
 func (h *Handler) Init(config *Config, pm policy.Manager) error {
+	if err := ValidateTCPFingerprint(config); err != nil {
+		return err
+	}
+	if config.TcpFingerprint != "" && h.usesDialerProxy {
+		return errors.New("tcpFingerprint cannot be combined with dialerProxy")
+	}
 	h.config = config
 	h.policyManager = pm
 	if h.usesDialerProxy { // freedom is not the final outbound, final rules do not apply
@@ -203,6 +217,21 @@ func (h *Handler) Init(config *Config, pm policy.Manager) error {
 			return errors.New("failed to build final rule").Base(err)
 		}
 		h.finalRules = append(h.finalRules, rule)
+	}
+	if config.TcpFingerprint != "" {
+		var err error
+		h.fingerprint, err = newSelectingFingerprintDialer(config, newFingerprintDialer)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Close releases the outbound's TCP stack and TUN descriptor.
+func (h *Handler) Close() error {
+	if h.fingerprint != nil {
+		return h.fingerprint.Close()
 	}
 	return nil
 }
@@ -271,6 +300,13 @@ func (h *Handler) Process(ctx context.Context, link *transport.Link, dialer inte
 	}
 	dialer.SetOutboundGateway(ctx, ob)
 	outGateway := ob.Gateway
+	if h.fingerprint != nil && destination.Network == net.Network_TCP {
+		if outGateway != nil {
+			return errors.New("tcpFingerprint cannot be combined with sendThrough")
+		}
+		ob.CanSpliceCopy = 0
+		ctx = internet.ContextWithTCPDialer(ctx, h.fingerprint.Dial)
+	}
 	UDPOverride := net.UDPDestination(nil, 0)
 	if h.config.DestinationOverride != nil {
 		server := h.config.DestinationOverride.Server
@@ -291,6 +327,14 @@ func (h *Handler) Process(ctx context.Context, link *transport.Link, dialer inte
 	var blockedDest *net.Destination
 	var blockedRule *FinalRule
 	err := retry.ExponentialBackoff(5, 100).On(func() error {
+		if h.fingerprint != nil && destination.Network == net.Network_TCP {
+			// Resolve before finalRules and dial that exact address.
+			addr, err := h.fingerprintAddress(ctx, destination.Address)
+			if err != nil {
+				return err
+			}
+			destination.Address = addr
+		}
 		if destination.Address.Family().IsDomain() {
 			if defaultRule != nil || len(h.finalRules) > 0 {
 				if strategy := h.resolveStrategy; strategy.HasStrategy() {
@@ -425,7 +469,7 @@ func (h *Handler) Process(ctx context.Context, link *transport.Link, dialer inte
 
 	responseDone := func() error {
 		defer timer.SetTimeout(plcy.Timeouts.UplinkOnly)
-		if destination.Network == net.Network_TCP && useSplice.Load() && proxy.IsRAWTransportWithoutSecurity(conn) { // it would be tls conn in special use case of MITM, we need to let link handle traffic
+		if destination.Network == net.Network_TCP && h.fingerprint == nil && useSplice.Load() && proxy.IsRAWTransportWithoutSecurity(conn) { // it would be tls conn in special use case of MITM, we need to let link handle traffic
 			var writeConn net.Conn
 			var inTimer *signal.ActivityTimer
 			if inbound := session.InboundFromContext(ctx); inbound != nil && inbound.Conn != nil {

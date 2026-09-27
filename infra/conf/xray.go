@@ -349,6 +349,14 @@ func (c *OutboundDetourConfig) Build() (*core.OutboundHandlerConfig, error) {
 	}
 
 	if fc, ok := ts.(*freedom.Config); ok {
+		if fc.TcpFingerprint != "" {
+			if senderSettings.Via != nil || (senderSettings.MultiplexSettings != nil && senderSettings.MultiplexSettings.Enabled) {
+				return nil, errors.New("tcpFingerprint cannot be combined with sendThrough or mux")
+			}
+			if s := senderSettings.StreamSettings; s != nil && (len(s.Tcpmasks) != 0 || len(s.Udpmasks) != 0) {
+				return nil, errors.New("tcpFingerprint cannot be combined with finalmask")
+			}
+		}
 		if senderSettings.StreamSettings != nil &&
 			senderSettings.StreamSettings.SocketSettings != nil &&
 			senderSettings.StreamSettings.SocketSettings.AddressPortStrategy != internet.AddressPortStrategy_None {

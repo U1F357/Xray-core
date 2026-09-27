@@ -17,16 +17,19 @@ import (
 )
 
 type FreedomConfig struct {
-	TargetStrategy string                    `json:"targetStrategy"`
-	DomainStrategy string                    `json:"domainStrategy"`
-	Redirect       string                    `json:"redirect"`
-	UserLevel      uint32                    `json:"userLevel"`
-	Fragment       *Fragment                 `json:"fragment"`
-	Noise          *Noise                    `json:"noise"`
-	Noises         []*Noise                  `json:"noises"`
-	ProxyProtocol  uint32                    `json:"proxyProtocol"`
-	IPsBlocked     *StringList               `json:"ipsBlocked"`
-	FinalRules     []*FreedomFinalRuleConfig `json:"finalRules"`
+	TargetStrategy         string                          `json:"targetStrategy"`
+	DomainStrategy         string                          `json:"domainStrategy"`
+	Redirect               string                          `json:"redirect"`
+	UserLevel              uint32                          `json:"userLevel"`
+	Fragment               *Fragment                       `json:"fragment"`
+	Noise                  *Noise                          `json:"noise"`
+	Noises                 []*Noise                        `json:"noises"`
+	ProxyProtocol          uint32                          `json:"proxyProtocol"`
+	IPsBlocked             *StringList                     `json:"ipsBlocked"`
+	FinalRules             []*FreedomFinalRuleConfig       `json:"finalRules"`
+	TCPFingerprintFallback string                          `json:"tcpFingerprintFallback"`
+	TCPFingerprint         string                          `json:"tcpFingerprint"`
+	TCPFingerprintSettings *freedom.TCPFingerprintSettings `json:"tcpFingerprintSettings"`
 }
 
 type Fragment struct {
@@ -59,6 +62,12 @@ func (c *FreedomConfig) Build() (proto.Message, error) {
 	}
 
 	config := new(freedom.Config)
+	config.TcpFingerprint = strings.ToLower(c.TCPFingerprint)
+	config.TcpFingerprintFallback = strings.ToLower(c.TCPFingerprintFallback)
+	config.TcpFingerprintSettings = c.TCPFingerprintSettings
+	if err := freedom.ValidateTCPFingerprint(config); err != nil {
+		return nil, err
+	}
 	targetStrategy := c.TargetStrategy
 	if targetStrategy == "" {
 		targetStrategy = c.DomainStrategy

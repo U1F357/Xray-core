@@ -3,6 +3,7 @@ package outbound_test
 import (
 	"context"
 	"fmt"
+	stdnet "net"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -18,6 +19,7 @@ import (
 	core "github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/features/outbound"
 	"github.com/xtls/xray-core/proxy/freedom"
+	"github.com/xtls/xray-core/transport/internet"
 	"github.com/xtls/xray-core/transport/internet/stat"
 )
 
@@ -84,6 +86,39 @@ func TestOutboundWithStatCounter(t *testing.T) {
 	_, ok := conn.(*stat.CounterConnection)
 	if !ok {
 		t.Errorf("Expected conn to be CounterConnection")
+	}
+}
+
+func TestOutboundCustomTCPKeepsCounters(t *testing.T) {
+	v, err := core.New(&core.Config{App: []*serial.TypedMessage{
+		serial.ToTypedMessage(&stats.Config{}),
+		serial.ToTypedMessage(&policy.Config{System: &policy.SystemPolicy{Stats: &policy.SystemPolicy_Stats{OutboundUplink: true, OutboundDownlink: true}}}),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer v.Close()
+	if err := v.AddFeature(outbound.Manager(new(Manager))); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.WithValue(context.Background(), xrayKey, v)
+	ctx = session.ContextWithOutbounds(ctx, []*session.Outbound{{}})
+	h, err := NewHandler(ctx, &core.OutboundHandlerConfig{Tag: "fingerprint", ProxySettings: serial.ToTypedMessage(&freedom.Config{})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+	client, peer := stdnet.Pipe()
+	defer peer.Close()
+	ctx = internet.ContextWithTCPDialer(ctx, func(context.Context, net.Destination) (net.Conn, error) { return client, nil })
+	conn, err := h.(*Handler).Dial(ctx, net.TCPDestination(net.LocalHostIP, 443))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	counted, ok := conn.(*stat.CounterConnection)
+	if !ok || counted.Connection != client || counted.ReadCounter == nil || counted.WriteCounter == nil {
+		t.Fatalf("custom TCP lost statistics: %#v", conn)
 	}
 }
 

@@ -62,4 +62,14 @@ message Config {
   uint32 proxy_protocol = 6;
   repeated Noise noises = 7;
   repeated FinalRuleConfig final_rules = 8;
+  string tcp_fingerprint = 9;
+  TCPFingerprintSettings tcp_fingerprint_settings = 10;
+  string tcp_fingerprint_fallback = 11;
+}
+
+// Optional manual override. Omit to automatically provision the Linux network.
+// When specified, use this exclusive, preconfigured TUN and routed/NAT exit.
+message TCPFingerprintSettings {
+  string tun = 1;
+  string address = 2;
 }

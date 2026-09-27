@@ -62,7 +62,11 @@ node_modules/
 # System files
 Thumbs.db
 ehthumbs.db
+/testing/fingerprint/artifacts/
 
 # Other common ignores
 *.bak
 *.tmp
+
+# Custom release build output
+/dist/
