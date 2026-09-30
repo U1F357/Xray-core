@@ -1,8 +1,9 @@
-Generated gVisor netstack for Linux amd64; included as source for self-contained builds.
+Generated gVisor netstack source; export platform: linux/amd64.
 Upstream: https://github.com/google/gvisor
 Upstream commit: 95eb5d5930b0e7736826cc2cb949ba9d2c4d5d29
-Profiles: native, windows, macos, linux. Default profile: windows.
-Xray WireGuard and TUN consumers explicitly request native.
-All custom modifications and integration were implemented entirely by AI (OpenAI Codex).
+Module version: v0.0.0-20260913204725-95eb5d5930b0
+Profiles: native (default), windows, macos, linux. Freedom selects profiles explicitly.
+Custom modifications and integration were implemented entirely by AI (OpenAI Codex).
 Original upstream copyright and Apache-2.0 license remain applicable; see LICENSE and AUTHORS.
-See ../../README.tcp-fingerprint.zh-CN.md and ../gvisor-tcp-fingerprints.patch.
+Regenerate/verify: python3 scripts/update-gvisor.py [--update] from the repository root.
+See ../gvisor-source.json, ../gvisor-tcp-fingerprints.patch and ../../README.tcp-fingerprint.zh-CN.md.

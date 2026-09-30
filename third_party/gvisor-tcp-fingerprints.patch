@@ -319,7 +319,7 @@ index a3c8295..29b6db1 100644
 +// DefaultFingerprintProfile is a build-time default. Set with Go -ldflags -X
 +// or Bazel x_defs to "windows", "macos", "linux", or "native". Do not mutate
 +// it at runtime; use tcpip.TCPFingerprintProfile on the stack instead.
-+var DefaultFingerprintProfile = "windows"
++var DefaultFingerprintProfile = "native"
 +
 +func defaultFingerprintProfile() tcpip.TCPFingerprintProfile {
 +	switch DefaultFingerprintProfile {
@@ -702,3 +702,33 @@ index 0000000..fb0045b
 +		})
 +	}
 +}
+diff --git a/BUILD b/BUILD
+index 027e878..88578c4 100644
+--- a/BUILD
++++ b/BUILD
+@@ -219,3 +219,25 @@ exports_files([
+     "go.sum",
+     "go.mod",
+ ])
++
++# Generated Go sources for embedding this custom netstack in Go programs.
++go_path(
++    name = "netstack_gopath",
++    mode = "archive",
++    deps = [
++        "//pkg/tcpip/adapters/gonet",
++        "//pkg/tcpip/faketime",
++        "//pkg/tcpip/link/channel",
++        "//pkg/tcpip/link/ethernet",
++        "//pkg/tcpip/link/fdbased",
++        "//pkg/tcpip/link/loopback",
++        "//pkg/tcpip/link/sniffer",
++        "//pkg/tcpip/link/tun",
++        "//pkg/tcpip/network/arp",
++        "//pkg/tcpip/network/ipv4",
++        "//pkg/tcpip/network/ipv6",
++        "//pkg/tcpip/transport/icmp",
++        "//pkg/tcpip/transport/tcp",
++        "//pkg/tcpip/transport/udp",
++    ],
++)

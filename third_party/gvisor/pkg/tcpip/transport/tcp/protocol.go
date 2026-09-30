@@ -88,7 +88,7 @@ const (
 // DefaultFingerprintProfile is a build-time default. Set with Go -ldflags -X
 // or Bazel x_defs to "windows", "macos", "linux", or "native". Do not mutate
 // it at runtime; use tcpip.TCPFingerprintProfile on the stack instead.
-var DefaultFingerprintProfile = "windows"
+var DefaultFingerprintProfile = "native"
 
 func defaultFingerprintProfile() tcpip.TCPFingerprintProfile {
 	switch DefaultFingerprintProfile {

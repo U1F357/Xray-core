@@ -187,6 +187,23 @@ func NewWithContext(ctx context.Context, config *Config) (*Instance, error) {
 }
 
 func initInstanceWithConfig(config *Config, server *Instance) (bool, error) {
+	// Plan before constructing listeners. This is per instance, not process-global,
+	// and applies equally to JSON-built and protobuf configurations.
+	capture := false
+	for _, outbound := range config.Outbound {
+		if outbound.ProxySettings == nil {
+			continue
+		}
+		settings, err := outbound.ProxySettings.GetInstance()
+		if err != nil {
+			return true, err
+		}
+		if request, ok := settings.(interface{ RequiresTCPFingerprintCapture() bool }); ok && request.RequiresTCPFingerprintCapture() {
+			capture = true
+		}
+	}
+	server.ctx = internet.ContextWithTCPFingerprintCapture(server.ctx, capture)
+
 	if err := platform.ReloadEnvSettings(); err != nil {
 		return true, errors.New("failed to reload environment settings").Base(err)
 	}

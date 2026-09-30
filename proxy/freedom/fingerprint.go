@@ -20,6 +20,9 @@ type fingerprintDialer interface {
 	Close() error
 }
 
+// RequiresTCPFingerprintCapture lets core plan instance-local capture without importing freedom.
+func (c *Config) RequiresTCPFingerprintCapture() bool { return c.TcpFingerprint == "auto" }
+
 // ValidateTCPFingerprint validates both JSON-built and protobuf configurations.
 func ValidateTCPFingerprint(c *Config) error {
 	if c.TcpFingerprintFallback != "" {
@@ -154,8 +157,12 @@ func newSelectingFingerprintDialer(c *Config, create func(*Config) (fingerprintD
 }
 func (d *selectingFingerprintDialer) Dial(ctx context.Context, dest net.Destination) (net.Conn, error) {
 	profile := ""
+	source := "unknown"
 	if in := session.InboundFromContext(ctx); in != nil {
 		profile = in.TCPFingerprint
+		if in.TCPFingerprintSource != "" {
+			source = in.TCPFingerprintSource
+		}
 	}
 	selected := d.profiles[profile]
 	chosen := profile
@@ -167,7 +174,7 @@ func (d *selectingFingerprintDialer) Dial(ctx context.Context, dest net.Destinat
 	if profile == "" {
 		profile = "unknown"
 	}
-	errors.LogInfo(ctx, "TCP fingerprint freedom: mode=auto detected=", profile, " selected=", chosen, " fallback=", fallback, " template=", fingerprintTemplate(chosen), " dialing=", dest)
+	errors.LogInfo(ctx, "TCP fingerprint freedom: mode=auto detected=", profile, " selected=", chosen, " fallback=", fallback, " source=", source, " template=", fingerprintTemplate(chosen), " dialing=", dest)
 	return selected.Dial(ctx, dest)
 }
 func (d *selectingFingerprintDialer) Close() error {

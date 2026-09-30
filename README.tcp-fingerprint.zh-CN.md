@@ -69,9 +69,9 @@ Xray 出站的流量统计、freedom redirect、fragment、PROXY protocol 和 fi
 仅可与 `auto` 一起使用。`auto` 自动创建三套独立的网络栈和网络管理子进程，
 按每条会话选择，不修改共享栈的指纹。不能同时指定手动 `tcpFingerprintSettings`。
 
-Linux 监听 socket 启用 `TCP_SAVE_SYN`，TCP 传输在 accept 后、TLS/REALITY
-包装前用 `TCP_SAVED_SYN` 读取初始 IP/TCP 头。分类结果只在本机的入站会话
-信息中传递，不相信客户端声明的操作系统。入站流量统计不会丢失分类；Mux
+按实例及入站策略启用采集时，Linux 监听 socket 启用 `TCP_SAVE_SYN`，TCP 传输在 accept 后、TLS/REALITY
+包装前用 `TCP_SAVED_SYN` 读取初始 IP/TCP 头。默认分类结果在本机入站会话中传递，不相信客户端声明的操作系统。
+可显式启用[可信 VLESS 多跳传递](docs/vless-fingerprint.zh-CN.md)。入站流量统计不会丢失分类；Mux
 逻辑流继承物理连接的分类。临时的元数据包装在入站 worker 开始处理时就会
 移除，后续仍获得原本的 TCP/TLS/REALITY 连接对象。
 
@@ -84,7 +84,7 @@ VLESS TCP、VLESS TCP+TLS 及 Mux。WebSocket、XHTTP、QUIC、Unix socket、
 PROXY protocol 包装或其他无法读取底层 socket 的路径使用备用类别。
 旧内核、不支持这些 socket 选项的运行环境、SYN cookies 导致未保存 SYN、
 显式开启 MPTCP 等情况下也可能读不到 SYN，此时同样使用备用类别。
-普通 TCP 监听显式关闭 Go 隐式启用的 MPTCP；`sockopt.tcpMptcp: true` 仍保留。
+仅启用 SYN 采集的 TCP 监听显式关闭 Go 隐式启用的 MPTCP；`sockopt.tcpMptcp: true` 仍保留。
 
 观察到的总是最后一跳 TCP 发起端。如果 CDN/中转重新建立了 TCP，识别到的是
 它的协议栈；单个复用连接内不同原始用户无法凭这个 SYN 再区分。
@@ -222,9 +222,8 @@ ip tuntap del dev xrfp0 mode tun
   transport TLS/REALITY、finalmask、TCP transport headers 和其他 sockopt。
   用户连接内的 HTTPS/TLS 不受这个限制。
 - egress 网卡由宿主路由决定；自动模式自行准备所需的接口转发和 NAT。
-- Xray 原有 WireGuard 和 TUN 入站显式选择 gVisor native TCP profile，避免被本库
-  默认 Windows profile 影响。替换的 netstack 版本更新了它们共同使用的依赖；
-  本次未做完整 WireGuard 隧道回归或吞吐基准测试。
+- 共享 gVisor 库默认 native；原有 WireGuard 和 TUN 入站也显式选择 native。
+  已通过真实 WireGuard 隧道 TCP/UDP、原有 TUN 入站 TCP/UDP 回归；未做吞吐基准。
 - 外层若终止 TCP 再重新连接，最终指纹仍由外层决定；此次验收只比较本机发出的 SYN。
 
 ## 构建与测试
@@ -270,3 +269,26 @@ freedom、finalRules 阻断、关闭重开和文件描述符释放。提供 `XRA
 还在 race detector 下测试重复关闭和活动连接中断。
 
 抓包、日志和报告写入 `testing/fingerprint/artifacts/`。
+
+## 共享网络库与可复现来源
+
+WireGuard、TUN 入站和 freedom 共享唯一的 `gvisor.dev/gvisor` 模块，没有再嵌入第二份网络栈。
+模块版本与源码提交一致，默认 native；三个自定义模板在独立栈实例上选择。
+WireGuard 原本通过加密隧道搬运网络包，TUN 入站原本就从接口收包；普通 freedom 则只有宿主 TCP socket。
+因此自定义 freedom 需要额外的报文出口，本实现自动创建内部 TUN/NAT。它复用同一 TCP/IP 库，
+但不能复用一个并不存在的 WireGuard 隧道。无需使用者手动配置，仍需要操作系统授权相关网络操作。
+
+`third_party/gvisor-source.json` 固定上游提交、Bazel 版本和补丁哈希。
+`third_party/gvisor-export.sha256.json` 记录全部导出文件；构建先离线校验来源一致性。
+正常构建不需要 Bazel。维护者需要重新导出时：
+
+```bash
+python3 scripts/check-gvisor.py
+# 需要 Git、Bazel 8.3.1 及网络；不带 --update 时重新生成并比较
+python3 scripts/update-gvisor.py --bazel /path/to/bazel
+# 修改补丁并确认来源后更新导出源码与清单
+python3 scripts/update-gvisor.py --bazel /path/to/bazel --update
+```
+
+已实际重新运行导出并核对全部 526 个文件。替换的 gVisor 版本仍较原版 Xray 的依赖更新；
+native 保留该版本原生行为，并不意味着恢复旧版本全部内部实现。

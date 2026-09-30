@@ -15,11 +15,12 @@
 - 自定义 gVisor 控制 TCP SYN 的初始窗口、选项顺序及窗口缩放；三种模板使用独立栈。
 - `auto` 通过 Linux `TCP_SAVE_SYN` / `TCP_SAVED_SYN` 获取入站 SYN、进行保守分类，
   随会话传递给 freedom；Mux 逻辑流继承物理连接类别。
+- VLESS 可显式传递会话指纹类别，支持可信中转多跳继承；[配置说明](docs/vless-fingerprint.zh-CN.md)。
 - 自动准备内部 TUN、路由、nftables NAT 和必要的接口转发设置，退出时清理；
   无需手工配置网络，也不需要安装 runsc 或运行 gVisor 容器。
 - INFO 日志显示入站识别类别、freedom 所选模板以及是否使用备用类别。
 - 不配置指纹时仍使用原生 freedom；UDP 保留原有路径。现有 WireGuard/TUN 入站显式使用
-  gVisor native profile，避免被自定义默认模板影响。
+  gVisor native profile；共享网络库默认也是 native，指纹仅按栈实例显式开启。
 - 修改过的网络栈源码包含在 `third_party/gvisor`，可独立克隆构建。
   上游通用工作流归档在 `docs/upstream-workflows`，本 fork 使用专用 Linux amd64 发布流程。
 
@@ -74,8 +75,8 @@ sudo ./xray-fingerprint run -config example-auto.json
 
 ```text
 TCP fingerprint inbound: detected=windows peer=...
-TCP fingerprint freedom: mode=auto detected=windows selected=windows fallback=false template=64240_2-1-3-1-1-4_*_8 dialing=tcp:...
-TCP fingerprint freedom: mode=auto detected=unknown selected=linux fallback=true template=65535_2-4-8-1-3_*_9 dialing=tcp:...
+TCP fingerprint freedom: mode=auto detected=windows selected=windows fallback=false source=syn template=64240_2-1-3-1-1-4_*_8 dialing=tcp:...
+TCP fingerprint freedom: mode=auto detected=unknown selected=linux fallback=true source=syn template=65535_2-4-8-1-3_*_9 dialing=tcp:...
 ```
 
 日志带会话 ID；`dialing` 表示拨号尝试，连接结果看后续成功/失败日志。
@@ -93,7 +94,14 @@ TCP fingerprint freedom: mode=auto detected=unknown selected=linux fallback=true
 - 不修改整机默认路由或全局 IPv4 forwarding。会暂时管理相关接口的转发设置及专属规则。
   正常退出和仅主进程被杀均有清理机制；主进程及管理子进程全被强杀时，部分规则可能
   留到下次启动按记录恢复。防火墙服务重载等环境变化需配合重启。
-- 未完成完整 WireGuard 隧道回归和吞吐基准测试。完整边界见[详细说明](README.tcp-fingerprint.zh-CN.md)。
+- 已验证真实 WireGuard 隧道 TCP/UDP 和原有 TUN 入站；尚未做吞吐基准测试。完整边界见[详细说明](README.tcp-fingerprint.zh-CN.md)。
+
+## 多跳传递
+
+第一入口配置 `tcpFingerprint.source: "syn"`；VLESS 出站启用 `settings.tcpFingerprintForward`。
+后续 VLESS 入站配置 `source: "vless"` 和明确的 `trustedUsers`；末端 freedom 使用 `auto`。
+节点间转发出站必须关闭 Mux；用户到第一入口的 Mux 可以继承物理连接的分类。
+原版节点能处理流量，但不会继续传递类别。[完整配置、信任边界及示例](docs/vless-fingerprint.zh-CN.md)。
 
 ## 构建与发布
 

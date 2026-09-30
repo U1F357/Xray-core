@@ -12,6 +12,9 @@ import (
 	"time"
 
 	"github.com/xtls/xray-core/common/net"
+	"gvisor.dev/gvisor/pkg/tcpip"
+	"gvisor.dev/gvisor/pkg/tcpip/stack"
+	"gvisor.dev/gvisor/pkg/tcpip/transport/tcp"
 )
 
 // The local integration harness supplies an exclusive, preconfigured TUN.
@@ -89,5 +92,14 @@ func TestFingerprintLifecycle(t *testing.T) {
 		} else if len(fds) > baseline {
 			t.Fatalf("file descriptor leak: before %d, now %d", baseline, len(fds))
 		}
+	}
+}
+
+func TestFingerprintNativeDefault(t *testing.T) {
+	s := stack.New(stack.Options{TransportProtocols: []stack.TransportProtocolFactory{tcp.NewProtocol}})
+	defer s.Close()
+	var p tcpip.TCPFingerprintProfile
+	if err := s.TransportProtocolOption(tcp.ProtocolNumber, &p); err != nil || p != tcpip.TCPFingerprintNative {
+		t.Fatalf("default profile=%v error=%v", p, err)
 	}
 }

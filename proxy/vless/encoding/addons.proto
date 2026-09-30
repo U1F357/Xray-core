@@ -9,4 +9,6 @@ option java_multiple_files = true;
 message Addons {
   string Flow = 1;
   bytes Seed = 2;
+  // Private experimental extension; not allocated or standardized by upstream.
+  bytes tcp_fingerprint = 65001;
 }

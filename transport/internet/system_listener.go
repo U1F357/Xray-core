@@ -35,7 +35,7 @@ func getControlFunc(ctx context.Context, sockopt *SocketConfig, controllers []fu
 				}
 			}
 
-			if strings.HasPrefix(network, "tcp") {
+			if strings.HasPrefix(network, "tcp") && tcpFingerprintCaptureActive(ctx) {
 				enableSavedSYN(fd)
 			}
 			setReusePort(fd)
@@ -90,9 +90,11 @@ func (dl *DefaultListener) Listen(ctx context.Context, addr net.Addr, sockopt *S
 		network = addr.Network()
 		address = addr.String()
 		lc.Control = getControlFunc(ctx, sockopt, dl.controllers)
-		// Honor Xray's explicit MPTCP opt-in rather than Go's listener default.
-		// MPTCP meta sockets cannot save SYN headers on current Linux kernels.
-		lc.SetMultipathTCP(sockopt != nil && sockopt.TcpMptcp)
+		// Only capture-enabled listeners opt out of Go's implicit MPTCP.
+		// Otherwise preserve upstream's defaults and explicit MPTCP setting.
+		if tcpFingerprintCaptureActive(ctx) {
+			lc.SetMultipathTCP(sockopt != nil && sockopt.TcpMptcp)
+		}
 		// default disable keepalive
 		lc.KeepAlive = -1
 		if sockopt != nil {

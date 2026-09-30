@@ -1,0 +1,10 @@
+{
+  "upstream": "https://github.com/google/gvisor",
+  "commit": "95eb5d5930b0e7736826cc2cb949ba9d2c4d5d29",
+  "module_version": "v0.0.0-20260913204725-95eb5d5930b0",
+  "bazel_version": "8.3.1",
+  "export_target": "//:netstack_gopath",
+  "export_platform": "linux/amd64",
+  "default_profile": "native",
+  "patch_sha256": "e419e6fa7eeffad05f9a1f61e0717c465143f8852e9f2b22285ed740c2798a4f"
+}

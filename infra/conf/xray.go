@@ -126,19 +126,36 @@ func (m *MuxConfig) Build() (*proxyman.MultiplexingConfig, error) {
 	}, nil
 }
 
+type TCPFingerprintInboundConfig struct {
+	Source       string   `json:"source"`
+	TrustedUsers []string `json:"trustedUsers"`
+	OnMissing    string   `json:"onMissing"`
+}
+
 type InboundDetourConfig struct {
-	Protocol       string           `json:"protocol"`
-	PortList       *PortList        `json:"port"`
-	ListenOn       *Address         `json:"listen"`
-	Settings       *json.RawMessage `json:"settings"`
-	Tag            string           `json:"tag"`
-	StreamSetting  *StreamConfig    `json:"streamSettings"`
-	SniffingConfig *SniffingConfig  `json:"sniffing"`
+	TCPFingerprint *TCPFingerprintInboundConfig `json:"tcpFingerprint"`
+	Protocol       string                       `json:"protocol"`
+	PortList       *PortList                    `json:"port"`
+	ListenOn       *Address                     `json:"listen"`
+	Settings       *json.RawMessage             `json:"settings"`
+	Tag            string                       `json:"tag"`
+	StreamSetting  *StreamConfig                `json:"streamSettings"`
+	SniffingConfig *SniffingConfig              `json:"sniffing"`
 }
 
 // Build implements Buildable.
 func (c *InboundDetourConfig) Build() (*core.InboundHandlerConfig, error) {
 	receiverSettings := &proxyman.ReceiverConfig{}
+	if c.TCPFingerprint != nil {
+		fp := c.TCPFingerprint
+		receiverSettings.TcpFingerprint = &proxyman.TCPFingerprintConfig{Source: fp.Source, TrustedUsers: fp.TrustedUsers, OnMissing: fp.OnMissing}
+		if err := proxyman.ValidateTCPFingerprintPolicy(receiverSettings.TcpFingerprint); err != nil {
+			return nil, err
+		}
+		if fp.Source == "vless" && strings.ToLower(c.Protocol) != "vless" {
+			return nil, errors.New("tcpFingerprint source vless requires a VLESS inbound")
+		}
+	}
 
 	// TUN inbound doesn't need port configuration as it uses network interface instead
 	if strings.ToLower(c.Protocol) == "tun" {
@@ -348,6 +365,11 @@ func (c *OutboundDetourConfig) Build() (*core.OutboundHandlerConfig, error) {
 		return nil, errors.New("the masque transport can only be used by the masque outbound")
 	}
 
+	if forwarding, ok := ts.(interface{ GetTcpFingerprintForward() bool }); ok && forwarding.GetTcpFingerprintForward() {
+		if senderSettings.MultiplexSettings != nil && senderSettings.MultiplexSettings.Enabled {
+			return nil, errors.New("tcpFingerprintForward cannot be combined with outbound mux")
+		}
+	}
 	if fc, ok := ts.(*freedom.Config); ok {
 		if fc.TcpFingerprint != "" {
 			if senderSettings.Via != nil || (senderSettings.MultiplexSettings != nil && senderSettings.MultiplexSettings.Enabled) {

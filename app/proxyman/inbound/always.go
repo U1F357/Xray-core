@@ -53,6 +53,14 @@ type AlwaysOnInboundHandler struct {
 }
 
 func NewAlwaysOnInboundHandler(ctx context.Context, tag string, receiverConfig *proxyman.ReceiverConfig, proxyConfig interface{}) (*AlwaysOnInboundHandler, error) {
+	if p := receiverConfig.TcpFingerprint; p != nil {
+		if err := proxyman.ValidateTCPFingerprintPolicy(p); err != nil {
+			return nil, err
+		}
+		ctx = session.ContextWithTCPFingerprintPolicy(ctx, &session.TCPFingerprintPolicy{Source: p.Source, TrustedUsers: append([]string(nil), p.TrustedUsers...), OnMissing: p.OnMissing})
+		ctx = internet.ContextWithTCPFingerprintCapture(ctx, p.Source == "syn" || (p.Source == "vless" && p.OnMissing == "syn"))
+	}
+
 	sniffingRequest, err := proxyman.BuildSniffingRequest(receiverConfig.SniffingSettings)
 	if err != nil {
 		return nil, err

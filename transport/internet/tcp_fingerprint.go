@@ -1,6 +1,7 @@
 package internet
 
 import (
+	"context"
 	"encoding/binary"
 	"net"
 	"strconv"
@@ -125,4 +126,26 @@ func ClassifyTCPSYN(packet []byte) string {
 		return "linux"
 	}
 	return ""
+}
+
+type fingerprintCaptureRequestedKey struct{}
+type fingerprintCaptureActiveKey struct{}
+
+// ContextWithTCPFingerprintCapture requests SYN capture for eligible TCP listeners.
+// Existing listeners are immutable; adding auto outbounds later requires restart.
+func ContextWithTCPFingerprintCapture(ctx context.Context, enabled bool) context.Context {
+	return context.WithValue(ctx, fingerprintCaptureRequestedKey{}, enabled)
+}
+func TCPFingerprintCaptureRequested(ctx context.Context) bool {
+	enabled, _ := ctx.Value(fingerprintCaptureRequestedKey{}).(bool)
+	return enabled
+}
+
+// ContextWithActiveTCPFingerprintCapture is set only by the raw TCP transport.
+func ContextWithActiveTCPFingerprintCapture(ctx context.Context) context.Context {
+	return context.WithValue(ctx, fingerprintCaptureActiveKey{}, true)
+}
+func tcpFingerprintCaptureActive(ctx context.Context) bool {
+	enabled, _ := ctx.Value(fingerprintCaptureActiveKey{}).(bool)
+	return enabled
 }

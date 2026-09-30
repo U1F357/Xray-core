@@ -50,11 +50,12 @@ func init() {
 
 // Handler is an outbound connection handler for VLess protocol.
 type Handler struct {
-	server        *protocol.ServerSpec
-	policyManager policy.Manager
-	cone          bool
-	encryption    *encryption.ClientInstance
-	reverse       *Reverse
+	fingerprintForward bool
+	server             *protocol.ServerSpec
+	policyManager      policy.Manager
+	cone               bool
+	encryption         *encryption.ClientInstance
+	reverse            *Reverse
 
 	testpre  uint32
 	initpre  sync.Once
@@ -78,12 +79,16 @@ func New(ctx context.Context, config *Config) (*Handler, error) {
 
 	v := core.MustFromContext(ctx)
 	handler := &Handler{
-		server:        server,
-		policyManager: v.GetFeature(policy.ManagerType()).(policy.Manager),
-		cone:          ctx.Value("cone").(bool),
+		fingerprintForward: config.TcpFingerprintForward,
+		server:             server,
+		policyManager:      v.GetFeature(policy.ManagerType()).(policy.Manager),
+		cone:               ctx.Value("cone").(bool),
 	}
 
 	a := handler.server.User.Account.(*vless.MemoryAccount)
+	if config.TcpFingerprintForward && a.Reverse != nil {
+		return nil, errors.New("tcpFingerprintForward does not support reverse VLESS")
+	}
 	if a.Encryption != "" && a.Encryption != "none" {
 		s := strings.Split(a.Encryption, ".")
 		var nfsPKeysBytes [][]byte
@@ -241,6 +246,19 @@ func (h *Handler) Process(ctx context.Context, link *transport.Link, dialer inte
 
 	requestAddons := &encoding.Addons{
 		Flow: account.Flow,
+	}
+	if h.fingerprintForward {
+		if command == protocol.RequestCommandMux || command == protocol.RequestCommandRvs {
+			return errors.New("tcpFingerprintForward requires non-multiplexed forward VLESS")
+		}
+		if command == protocol.RequestCommandTCP {
+			profile := ""
+			if in := session.InboundFromContext(ctx); in != nil {
+				profile = in.TCPFingerprint
+			}
+			requestAddons.TcpFingerprint = encoding.EncodeTCPFingerprint(profile)
+			errors.LogInfo(ctx, "TCP fingerprint VLESS outbound: category=", encoding.TCPFingerprintLabel(profile), " forwarding=true")
+		}
 	}
 
 	var input *bytes.Reader

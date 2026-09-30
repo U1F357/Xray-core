@@ -243,23 +243,25 @@ type VLessOutboundVnext struct {
 }
 
 type VLessOutboundConfig struct {
-	Address    *Address              `json:"address"`
-	Port       uint16                `json:"port"`
-	Level      uint32                `json:"level"`
-	Email      string                `json:"email"`
-	Id         string                `json:"id"`
-	Flow       string                `json:"flow"`
-	Seed       string                `json:"seed"`
-	Encryption string                `json:"encryption"`
-	Reverse    *VLessReverseConfig   `json:"reverse"`
-	Testpre    uint32                `json:"testpre"`
-	Testseed   []uint32              `json:"testseed"`
-	Vnext      []*VLessOutboundVnext `json:"vnext"`
+	TCPFingerprintForward bool                  `json:"tcpFingerprintForward"`
+	Address               *Address              `json:"address"`
+	Port                  uint16                `json:"port"`
+	Level                 uint32                `json:"level"`
+	Email                 string                `json:"email"`
+	Id                    string                `json:"id"`
+	Flow                  string                `json:"flow"`
+	Seed                  string                `json:"seed"`
+	Encryption            string                `json:"encryption"`
+	Reverse               *VLessReverseConfig   `json:"reverse"`
+	Testpre               uint32                `json:"testpre"`
+	Testseed              []uint32              `json:"testseed"`
+	Vnext                 []*VLessOutboundVnext `json:"vnext"`
 }
 
 // Build implements Buildable
 func (c *VLessOutboundConfig) Build() (proto.Message, error) {
 	config := new(outbound.Config)
+	config.TcpFingerprintForward = c.TCPFingerprintForward
 	if c.Address != nil {
 		c.Vnext = []*VLessOutboundVnext{
 			{

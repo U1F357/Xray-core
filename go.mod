@@ -35,7 +35,7 @@ require (
 	golang.zx2c4.com/wireguard/windows v1.1.1
 	google.golang.org/grpc v1.84.0
 	google.golang.org/protobuf v1.36.12
-	gvisor.dev/gvisor v0.0.0-20260122175437-89a5d21be8f0
+	gvisor.dev/gvisor v0.0.0-20260913204725-95eb5d5930b0
 	h12.io/socks v1.0.3
 	lukechampine.com/blake3 v1.4.1
 	mvdan.cc/gofumpt v0.12.0

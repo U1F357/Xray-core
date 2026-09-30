@@ -15,7 +15,8 @@ import time
 
 ROOT = Path(__file__).resolve().parents[2]
 BINARY = Path(sys.argv[1]).resolve() if len(sys.argv)>1 else ROOT/'dist/xray-fingerprint'
-OUT = ROOT/'testing/fingerprint/artifacts/auto-selection'
+MULTI_HOP = os.environ.get('XRAY_FP_MULTI_HOP') == '1'
+OUT = ROOT/'testing/fingerprint/artifacts'/('multi-hop' if MULTI_HOP else 'auto-selection')
 OUT.mkdir(parents=True, exist_ok=True)
 PROFILES = ['windows','macos','linux']
 EXPECTED = ['64240_2-1-3-1-1-4_1460_8','65535_2-1-3-1-1-8-4-0-0_1460_6','65535_2-4-8-1-3_1460_9']
@@ -90,6 +91,20 @@ try:
  unix_path=str(OUT/'fallback.sock')
  server_config['inbounds'].append({'listen':unix_path,'protocol':'http','settings':{}})
  server_config['outbounds'][0]['settings']['finalRules'][0]['port']='18080-18083'
+ if MULTI_HOP:
+  # First ingress chooses the physically observed SYN, never a client claim.
+  for inbound in server_config['inbounds']:
+   if inbound['protocol']=='vless':inbound['tcpFingerprint']={'source':'syn'}
+  freedom=server_config['outbounds'][0]
+  def relay_out(port):
+   return {'protocol':'vless','settings':{'tcpFingerprintForward':True,'vnext':[{'address':'127.0.0.1','port':port,'users':[{'id':UUID,'encryption':'none'}]}]},'streamSettings':{'network':'tcp'}}
+  def relay_in(port,email):
+   return {'listen':'127.0.0.1','port':port,'protocol':'vless','settings':{'clients':[{'id':UUID,'email':email}],'decryption':'none'},'tcpFingerprint':{'source':'vless','trustedUsers':[email],'onMissing':'unknown'}}
+  server_config['outbounds']=[relay_out(12400)]
+  for name,config in [('exit',{'log':{'loglevel':'info'},'inbounds':[relay_in(12500,'middle@relay')],'outbounds':[freedom]}),('middle',{'log':{'loglevel':'info'},'inbounds':[relay_in(12400,'entry@relay')],'outbounds':[relay_out(12500)]})]:
+   path=OUT/(name+'.json');path.write_text(json.dumps(config));p=launch([str(BINARY),'run','-config',str(path)],name,SERVER);wait_log(p,name,'started')
+   if name=='exit':exit_process=p
+   else:middle_process=p
  (OUT/'server.json').write_text(json.dumps(server_config))
  server=launch([str(BINARY),'run','-config',str(OUT/'server.json')],'xray-server',SERVER)
  wait_log(server,'xray-server','started')
@@ -147,7 +162,15 @@ print("ready",flush=True);signal.pause()
  fallback=[v for v in outbound if v['port']==18083]
  assert fallback and all(v['fingerprint']==EXPECTED[1] for v in fallback),fallback
  report['fallback']=fallback
- server.terminate();server.wait(timeout=15)
+ if MULTI_HOP:
+  for process in [server,middle_process,exit_process]:process.terminate();process.wait(timeout=15)
+  for name in ['middle','exit']:
+   log=(OUT/(name+'.log')).read_text()
+   for profile in PROFILES:assert 'status=accepted source=vless category='+profile in log,(name,profile)
+  assert 'detected=unknown selected=macos fallback=true source=vless' in (OUT/'exit.log').read_text()
+  report['multi_hop']={'nodes':3,'trusted_metadata':True,'unknown_preserved':True}
+ else:
+  server.terminate();server.wait(timeout=15)
  for _ in range(100):
   now=subprocess.check_output(['ip','netns','exec',SERVER,'nft','list','ruleset'])
   if now==baseline:break

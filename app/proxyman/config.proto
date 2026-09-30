@@ -43,6 +43,7 @@ message ReceiverConfig {
   bool receive_original_destination = 4;
   reserved 5;
   SniffingConfig sniffing_settings = 6;
+  TCPFingerprintConfig tcp_fingerprint = 7;
 }
 
 message InboundHandlerConfig {
@@ -72,4 +73,11 @@ message MultiplexingConfig {
   int32 xudpConcurrency = 3;
   // "reject" (default), "allow" or "skip".
   string xudpProxyUDP443 = 4;
+}
+
+// Local policy only; never accepted from an unauthenticated wire field.
+message TCPFingerprintConfig {
+ string source = 1;
+ repeated string trusted_users = 2;
+ string on_missing = 3;
 }

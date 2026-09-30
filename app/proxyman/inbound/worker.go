@@ -60,7 +60,9 @@ func getTProxyType(s *internet.MemoryStreamConfig) internet.SocketConfig_TProxyM
 
 func (w *tcpWorker) callback(conn stat.Connection) {
 	profile := ""
+	captureEnabled := false
 	if captured, ok := conn.(*internet.FingerprintedConn); ok {
+		captureEnabled = true
 		profile = captured.Profile
 		conn = captured.Conn
 	}
@@ -71,7 +73,9 @@ func (w *tcpWorker) callback(conn stat.Connection) {
 	if observed == "" {
 		observed = "unknown"
 	}
-	errors.LogInfo(ctx, "TCP fingerprint inbound: detected=", observed, " peer=", conn.RemoteAddr())
+	if captureEnabled {
+		errors.LogInfo(ctx, "TCP fingerprint inbound: detected=", observed, " peer=", conn.RemoteAddr())
+	}
 
 	outbounds := []*session.Outbound{{}}
 	if w.recvOrigDest {
@@ -119,12 +123,13 @@ func (w *tcpWorker) callback(conn stat.Connection) {
 		}
 	}
 	ctx = session.ContextWithInbound(ctx, &session.Inbound{
-		TCPFingerprint: profile,
-		Source:         net.DestinationFromAddr(conn.RemoteAddr()),
-		Local:          net.DestinationFromAddr(conn.LocalAddr()),
-		Gateway:        net.TCPDestination(w.address, w.port),
-		Tag:            w.tag,
-		Conn:           conn,
+		TCPFingerprint:       profile,
+		TCPFingerprintSource: "syn",
+		Source:               net.DestinationFromAddr(conn.RemoteAddr()),
+		Local:                net.DestinationFromAddr(conn.LocalAddr()),
+		Gateway:              net.TCPDestination(w.address, w.port),
+		Tag:                  w.tag,
+		Conn:                 conn,
 	})
 
 	content := new(session.Content)
@@ -143,7 +148,7 @@ func (w *tcpWorker) Proxy() proxy.Inbound {
 }
 
 func (w *tcpWorker) Start() error {
-	ctx := context.Background()
+	ctx := internet.ContextWithTCPFingerprintCapture(context.Background(), internet.TCPFingerprintCaptureRequested(w.ctx))
 
 	if v, ok := w.proxy.(*hysteria_proxy.Server); ok {
 		ctx = hysteria.ContextWithValidator(ctx, v.HysteriaInboundValidator())

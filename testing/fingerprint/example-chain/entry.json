@@ -1,0 +1,38 @@
+{
+  "inbounds": [
+    {
+      "listen": "127.0.0.1",
+      "port": 1080,
+      "protocol": "socks",
+      "settings": {
+        "auth": "noauth"
+      },
+      "tcpFingerprint": {
+        "source": "syn"
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "protocol": "vless",
+      "settings": {
+        "tcpFingerprintForward": true,
+        "vnext": [
+          {
+            "address": "127.0.0.1",
+            "port": 12400,
+            "users": [
+              {
+                "id": "8e023ca4-6e4d-47ab-9f38-233a67d95671",
+                "encryption": "none"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "log": {
+    "loglevel": "info"
+  }
+}

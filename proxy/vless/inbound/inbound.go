@@ -610,6 +610,7 @@ func (h *Handler) Process(ctx context.Context, network net.Network, connection s
 	}
 
 	trafficState := proxy.NewTrafficState(userSentID)
+	encoding.ApplyTCPFingerprint(ctx, requestAddons, request.User.Email)
 	clientReader := encoding.DecodeBodyAddons(reader, request, requestAddons)
 	if requestAddons.Flow == vless.XRV {
 		clientReader = proxy.NewVisionReader(clientReader, trafficState, true, ctx, connection, input, rawInput, nil)

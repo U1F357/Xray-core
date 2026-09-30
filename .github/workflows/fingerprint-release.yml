@@ -27,9 +27,11 @@ jobs:
           cache: true
       - name: Test and build static Linux amd64 release
         run: bash scripts/build-fingerprint-release.sh
+      - name: VLESS propagation and TLS/Vision integration
+        run: python3 testing/fingerprint/vless_interop.py dist/xray-fingerprint
       - name: Race tests
         run: |
-          go test -race ./proxy/freedom/... ./transport/internet ./app/proxyman/outbound ./infra/conf \
+          go test -race ./proxy/vless/... ./proxy/wireguard ./proxy/tun ./proxy/freedom/... ./transport/internet ./app/proxyman/outbound ./infra/conf \
             -run 'TestFreedom|TestOutbound|TestTCP|TestFingerprint|TestCanceledReply|TestProcessIdentity' -count=1
       - name: Prepare packet capture tests
         run: |
@@ -40,6 +42,7 @@ jobs:
         run: |
           sudo python3 testing/fingerprint/e2e.py "$PWD/dist/xray-fingerprint"
           sudo python3 testing/fingerprint/auto_e2e.py "$PWD/dist/xray-fingerprint"
+          sudo python3 testing/fingerprint/legacy_tun_e2e.py "$PWD/dist/xray-fingerprint"
       - name: Save packet capture reports
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

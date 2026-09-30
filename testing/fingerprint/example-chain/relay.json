@@ -1,0 +1,47 @@
+{
+  "inbounds": [
+    {
+      "listen": "127.0.0.1",
+      "port": 12400,
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "8e023ca4-6e4d-47ab-9f38-233a67d95671",
+            "email": "entry@relay"
+          }
+        ],
+        "decryption": "none"
+      },
+      "tcpFingerprint": {
+        "source": "vless",
+        "trustedUsers": [
+          "entry@relay"
+        ]
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "protocol": "vless",
+      "settings": {
+        "tcpFingerprintForward": true,
+        "vnext": [
+          {
+            "address": "127.0.0.1",
+            "port": 12500,
+            "users": [
+              {
+                "id": "8e023ca4-6e4d-47ab-9f38-233a67d95671",
+                "encryption": "none"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "log": {
+    "loglevel": "info"
+  }
+}
