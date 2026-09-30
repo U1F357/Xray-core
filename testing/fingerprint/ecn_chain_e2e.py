@@ -14,9 +14,10 @@ import time
 ROOT=Path(__file__).resolve().parents[2]
 BINARY=Path(sys.argv[1]).resolve()
 V6='--ipv6' in sys.argv[2:]
+DELAY='--handshake-delay' in sys.argv[2:]
 FIRST='2001:db8:11::2' if V6 else '198.18.0.2'
 DEST='2001:db8:22::2' if V6 else '192.0.2.2'
-OUT=ROOT/'testing/fingerprint/artifacts'/('ecn-chain-v6' if V6 else 'ecn-chain');OUT.mkdir(parents=True,exist_ok=True)
+OUT=ROOT/'testing/fingerprint/artifacts'/(('ecn-chain-v6' if V6 else 'ecn-chain')+('-delay' if DELAY else ''));OUT.mkdir(parents=True,exist_ok=True)
 PREFIX=f'xfpecn-{os.getpid()}'
 CLIENT,SERVER,PEER=[PREFIX+x for x in ('c','s','p')]
 spaces=[];processes=[];logs=[]
@@ -81,7 +82,7 @@ try:
  run(['ip','route','add','default','via',DEST],SERVER)
  if V6:
   for ns in spaces:run(['sysctl','-qw','net.ipv6.conf.all.forwarding=1'],ns)
- http='''import http.server,threading,signal,socket,sys
+ http='''import http.server,threading,signal,socket,sys,ssl
 v6=sys.argv[1]=="1"
 if v6:http.server.ThreadingHTTPServer.address_family=socket.AF_INET6
 class H(http.server.BaseHTTPRequestHandler):
@@ -89,11 +90,19 @@ class H(http.server.BaseHTTPRequestHandler):
   b=b"x"*131072;self.send_response(200);self.send_header("Content-Length",str(len(b)));self.end_headers();self.wfile.write(b)
  def log_message(self,*a):pass
 for port in range(18080,18089):
- s=http.server.ThreadingHTTPServer(("::" if v6 else "0.0.0.0",port),H);threading.Thread(target=s.serve_forever,daemon=True).start()
+ s=http.server.ThreadingHTTPServer(("::" if v6 else "0.0.0.0",port),H)
+ if len(sys.argv)>2:
+  ctx=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER);ctx.load_cert_chain(sys.argv[2],sys.argv[3]);s.socket=ctx.wrap_socket(s.socket,server_side=True)
+ threading.Thread(target=s.serve_forever,daemon=True).start()
 print("ready",flush=True);signal.pause()
 '''
- p=launch(['python3','-u','-c',http,'1' if V6 else '0'],PEER,'http');ready(p,'http','ready')
- core(SERVER,'exit',config([inbound(12500,'middle','vless')],[{'protocol':'freedom','settings':{'tcpFingerprint':'auto','tcpECN':'auto','finalRules':[{'action':'allow','ip':[DEST],'port':'18080-18088'}]}}]))
+ tlsargs=[]
+ if DELAY:
+  cert=OUT/'cert.pem';key=OUT/'key.pem'
+  run(['openssl','req','-x509','-newkey','rsa:2048','-nodes','-days','1','-subj','/CN=localhost','-keyout',str(key),'-out',str(cert)],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+  tlsargs=[str(cert),str(key)]
+ p=launch(['python3','-u','-c',http,'1' if V6 else '0']+tlsargs,PEER,'http');ready(p,'http','ready')
+ core(SERVER,'exit',config([inbound(12500,'middle','vless')],[{'protocol':'freedom','settings':{'tcpFingerprint':'auto','tcpECN':'auto',**({'tcpHandshakeDelay':{'minMs':200,'maxMs':300}} if DELAY else {}),'finalRules':[{'action':'allow','ip':[DEST],'port':'18080-18088'}]}}]))
  core(SERVER,'middle',config([inbound(12400,'entry','vless')],[outbound(12500)]))
  core(SERVER,'entry',config([inbound(12345,'client','syn')],[outbound(12400)]))
  ins=[];outs=[];rules=[]
@@ -105,7 +114,7 @@ print("ready",flush=True);signal.pause()
  captures=[]
  for ns,iface,name in [(SERVER,'client0','ingress'),(PEER,'eth0','egress')]:
   p=launch(['tcpdump','--immediate-mode','-U','-nn','-i',iface,'-s','128','-w',str(OUT/(name+'.pcap')),'ip6 and tcp' if V6 else 'tcp'],ns,name);wait_capture(p,OUT/(name+'.log'));captures.append(p)
- fetch='''import socket,struct,uuid,sys
+ fetch='''import socket,struct,uuid,sys,ssl
 idx=int(sys.argv[1]);v6=sys.argv[2]=="1"
 first="2001:db8:11::2" if v6 else "198.18.0.2";dest="2001:db8:22::2" if v6 else "192.0.2.2"
 pack=lambda a:socket.inet_pton(socket.AF_INET6 if v6 else socket.AF_INET,a)
@@ -117,18 +126,33 @@ def exact(n):
  return b
 s.sendall(b"\\x05\\x01\\x00");assert exact(2)==b"\\x05\\x00"
 s.sendall(b"\\x05\\x01\\x00"+bytes([4 if v6 else 1])+pack(first)+struct.pack("!H",12345));reply=exact(4);assert reply[:3]==b"\\x05\\x00\\x00";exact(18 if reply[3]==4 else 6)
-s.sendall(b"\\x00"+uuid.UUID("8e023ca4-6e4d-47ab-9f38-233a67d95671").bytes+b"\\x00\\x01"+struct.pack("!H",18080+idx)+bytes([3 if v6 else 1])+pack(dest)+b"GET / HTTP/1.0\\r\\nHost: test\\r\\n\\r\\n")
-assert exact(2)==b"\\x00\\x00"
-b=b""
-while True:
- a=s.recv(65536)
- if not a:break
- b+=a
+s.sendall(b"\\x00"+uuid.UUID("8e023ca4-6e4d-47ab-9f38-233a67d95671").bytes+b"\\x00\\x01"+struct.pack("!H",18080+idx)+bytes([3 if v6 else 1])+pack(dest))
+request=b"GET / HTTP/1.0\\r\\nHost: test\\r\\n\\r\\n"
+if sys.argv[3]=="1":
+ incoming=ssl.MemoryBIO();outgoing=ssl.MemoryBIO();tls=ssl._create_unverified_context().wrap_bio(incoming,outgoing,server_side=False,server_hostname="localhost")
+ try:tls.do_handshake()
+ except ssl.SSLWantReadError:pass
+ s.sendall(outgoing.read());assert exact(2)==b"\\x00\\x00"
+ while True:
+  try:tls.do_handshake();break
+  except ssl.SSLWantReadError:
+   s.sendall(outgoing.read());a=s.recv(65536);assert a;incoming.write(a)
+ s.sendall(outgoing.read());tls.write(request);s.sendall(outgoing.read());b=b""
+ while len(b.split(b"\\r\\n\\r\\n",1)[-1])<131072:
+  try:b+=tls.read(65536)
+  except ssl.SSLWantReadError:
+   s.sendall(outgoing.read());a=s.recv(65536);assert a;incoming.write(a)
+else:
+ s.sendall(request);assert exact(2)==b"\\x00\\x00";b=b""
+ while True:
+  a=s.recv(65536)
+  if not a:break
+  b+=a
 assert b.split(b"\\r\\n\\r\\n",1)[1]==b"x"*131072
 s.close()
 '''
  with concurrent.futures.ThreadPoolExecutor(max_workers=9) as pool:
-  list(pool.map(lambda i:run(['python3','-c',fetch,str(i),'1' if V6 else '0'],CLIENT),range(9)))
+  list(pool.map(lambda i:run(['python3','-c',fetch,str(i),'1' if V6 else '0','1' if DELAY else '0'],CLIENT),range(9)))
  time.sleep(.2)
  for p in captures:p.send_signal(signal.SIGINT);p.wait(timeout=10)
  observed=syns(OUT/'egress.pcap',range(18080,18089));assert len(observed)==9,observed
@@ -138,6 +162,9 @@ s.close()
   assert row['flags']=={'none':2,'classic':0xc2,'accecn':0x1c2}[mode],row
   expected_ecn=0 if mode=='none' else 2 if profile=='windows' else 1 if profile=='macos' and mode=='accecn' else 0
   assert row['ecn']==expected_ecn,row
+ if DELAY:
+  from handshake_delay_capture import verify
+  verify(OUT/'egress.pcap',OUT/'exit.log',OUT/'timing.json')
  text=(OUT/'exit.log').read_text()
  for mode in MODES:assert f'selected={mode} source=vless fallback=false' in text,text
  (OUT/'verification.json').write_text(json.dumps(observed,indent=2)+'\n')

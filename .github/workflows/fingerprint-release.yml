@@ -48,6 +48,8 @@ jobs:
           sudo python3 testing/fingerprint/platform_e2e.py "$PWD/dist/xrui"
           sudo python3 testing/fingerprint/ecn_chain_e2e.py "$PWD/dist/xrui"
           sudo python3 testing/fingerprint/ecn_chain_e2e.py "$PWD/dist/xrui" --ipv6
+          sudo python3 testing/fingerprint/ecn_chain_e2e.py "$PWD/dist/xrui" --handshake-delay
+          sudo python3 testing/fingerprint/ecn_chain_e2e.py "$PWD/dist/xrui" --ipv6 --handshake-delay
       - name: Save packet capture reports
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

@@ -440,9 +440,10 @@ type Config struct {
 	TcpFingerprintSettings *TCPFingerprintSettings `protobuf:"bytes,10,opt,name=tcp_fingerprint_settings,json=tcpFingerprintSettings,proto3" json:"tcp_fingerprint_settings,omitempty"`
 	TcpFingerprintFallback string                  `protobuf:"bytes,11,opt,name=tcp_fingerprint_fallback,json=tcpFingerprintFallback,proto3" json:"tcp_fingerprint_fallback,omitempty"`
 	// template (default), auto (ingress metadata), none, classic or accecn.
-	TcpEcn        string `protobuf:"bytes,12,opt,name=tcp_ecn,json=tcpEcn,proto3" json:"tcp_ecn,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	TcpEcn            string             `protobuf:"bytes,12,opt,name=tcp_ecn,json=tcpEcn,proto3" json:"tcp_ecn,omitempty"`
+	TcpHandshakeDelay *TCPHandshakeDelay `protobuf:"bytes,13,opt,name=tcp_handshake_delay,json=tcpHandshakeDelay,proto3" json:"tcp_handshake_delay,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *Config) Reset() {
@@ -552,6 +553,13 @@ func (x *Config) GetTcpEcn() string {
 	return ""
 }
 
+func (x *Config) GetTcpHandshakeDelay() *TCPHandshakeDelay {
+	if x != nil {
+		return x.TcpHandshakeDelay
+	}
+	return nil
+}
+
 // Optional manual override. Omit to automatically provision the Linux network.
 // When specified, use this exclusive, preconfigured TUN and routed/NAT exit.
 type TCPFingerprintSettings struct {
@@ -606,6 +614,59 @@ func (x *TCPFingerprintSettings) GetAddress() string {
 	return ""
 }
 
+// Delay delivery of the first SYN-ACK; inclusive millisecond bounds.
+type TCPHandshakeDelay struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	MinMs         uint32                 `protobuf:"varint,1,opt,name=min_ms,json=minMs,proto3" json:"min_ms,omitempty"`
+	MaxMs         uint32                 `protobuf:"varint,2,opt,name=max_ms,json=maxMs,proto3" json:"max_ms,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TCPHandshakeDelay) Reset() {
+	*x = TCPHandshakeDelay{}
+	mi := &file_proxy_freedom_config_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TCPHandshakeDelay) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TCPHandshakeDelay) ProtoMessage() {}
+
+func (x *TCPHandshakeDelay) ProtoReflect() protoreflect.Message {
+	mi := &file_proxy_freedom_config_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TCPHandshakeDelay.ProtoReflect.Descriptor instead.
+func (*TCPHandshakeDelay) Descriptor() ([]byte, []int) {
+	return file_proxy_freedom_config_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *TCPHandshakeDelay) GetMinMs() uint32 {
+	if x != nil {
+		return x.MinMs
+	}
+	return 0
+}
+
+func (x *TCPHandshakeDelay) GetMaxMs() uint32 {
+	if x != nil {
+		return x.MaxMs
+	}
+	return 0
+}
+
 var File_proxy_freedom_config_proto protoreflect.FileDescriptor
 
 const file_proxy_freedom_config_proto_rawDesc = "" +
@@ -643,7 +704,7 @@ const file_proxy_freedom_config_proto_rawDesc = "" +
 	"\tport_list\x18\x03 \x01(\v2\x19.xray.common.net.PortListR\bportList\x12+\n" +
 	"\x02ip\x18\x04 \x03(\v2\x1b.xray.common.geodata.IPRuleR\x02ip\x12:\n" +
 	"\vblock_delay\x18\x05 \x01(\v2\x19.xray.proxy.freedom.RangeR\n" +
-	"blockDelay\"\x91\x05\n" +
+	"blockDelay\"\xe8\x05\n" +
 	"\x06Config\x12P\n" +
 	"\x0fdomain_strategy\x18\x01 \x01(\x0e2'.xray.transport.internet.DomainStrategyR\x0edomainStrategy\x12Z\n" +
 	"\x14destination_override\x18\x03 \x01(\v2'.xray.proxy.freedom.DestinationOverrideR\x13destinationOverride\x12\x1d\n" +
@@ -658,10 +719,14 @@ const file_proxy_freedom_config_proto_rawDesc = "" +
 	"\x18tcp_fingerprint_settings\x18\n" +
 	" \x01(\v2*.xray.proxy.freedom.TCPFingerprintSettingsR\x16tcpFingerprintSettings\x128\n" +
 	"\x18tcp_fingerprint_fallback\x18\v \x01(\tR\x16tcpFingerprintFallback\x12\x17\n" +
-	"\atcp_ecn\x18\f \x01(\tR\x06tcpEcn\"D\n" +
+	"\atcp_ecn\x18\f \x01(\tR\x06tcpEcn\x12U\n" +
+	"\x13tcp_handshake_delay\x18\r \x01(\v2%.xray.proxy.freedom.TCPHandshakeDelayR\x11tcpHandshakeDelay\"D\n" +
 	"\x16TCPFingerprintSettings\x12\x10\n" +
 	"\x03tun\x18\x01 \x01(\tR\x03tun\x12\x18\n" +
-	"\aaddress\x18\x02 \x01(\tR\aaddress*\"\n" +
+	"\aaddress\x18\x02 \x01(\tR\aaddress\"A\n" +
+	"\x11TCPHandshakeDelay\x12\x15\n" +
+	"\x06min_ms\x18\x01 \x01(\rR\x05minMs\x12\x15\n" +
+	"\x06max_ms\x18\x02 \x01(\rR\x05maxMs*\"\n" +
 	"\n" +
 	"RuleAction\x12\t\n" +
 	"\x05Allow\x10\x00\x12\t\n" +
@@ -681,7 +746,7 @@ func file_proxy_freedom_config_proto_rawDescGZIP() []byte {
 }
 
 var file_proxy_freedom_config_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_proxy_freedom_config_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_proxy_freedom_config_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_proxy_freedom_config_proto_goTypes = []any{
 	(RuleAction)(0),                 // 0: xray.proxy.freedom.RuleAction
 	(*DestinationOverride)(nil),     // 1: xray.proxy.freedom.DestinationOverride
@@ -691,30 +756,32 @@ var file_proxy_freedom_config_proto_goTypes = []any{
 	(*FinalRuleConfig)(nil),         // 5: xray.proxy.freedom.FinalRuleConfig
 	(*Config)(nil),                  // 6: xray.proxy.freedom.Config
 	(*TCPFingerprintSettings)(nil),  // 7: xray.proxy.freedom.TCPFingerprintSettings
-	(*protocol.ServerEndpoint)(nil), // 8: xray.common.protocol.ServerEndpoint
-	(net.Network)(0),                // 9: xray.common.net.Network
-	(*net.PortList)(nil),            // 10: xray.common.net.PortList
-	(*geodata.IPRule)(nil),          // 11: xray.common.geodata.IPRule
-	(internet.DomainStrategy)(0),    // 12: xray.transport.internet.DomainStrategy
+	(*TCPHandshakeDelay)(nil),       // 8: xray.proxy.freedom.TCPHandshakeDelay
+	(*protocol.ServerEndpoint)(nil), // 9: xray.common.protocol.ServerEndpoint
+	(net.Network)(0),                // 10: xray.common.net.Network
+	(*net.PortList)(nil),            // 11: xray.common.net.PortList
+	(*geodata.IPRule)(nil),          // 12: xray.common.geodata.IPRule
+	(internet.DomainStrategy)(0),    // 13: xray.transport.internet.DomainStrategy
 }
 var file_proxy_freedom_config_proto_depIdxs = []int32{
-	8,  // 0: xray.proxy.freedom.DestinationOverride.server:type_name -> xray.common.protocol.ServerEndpoint
+	9,  // 0: xray.proxy.freedom.DestinationOverride.server:type_name -> xray.common.protocol.ServerEndpoint
 	0,  // 1: xray.proxy.freedom.FinalRuleConfig.action:type_name -> xray.proxy.freedom.RuleAction
-	9,  // 2: xray.proxy.freedom.FinalRuleConfig.networks:type_name -> xray.common.net.Network
-	10, // 3: xray.proxy.freedom.FinalRuleConfig.port_list:type_name -> xray.common.net.PortList
-	11, // 4: xray.proxy.freedom.FinalRuleConfig.ip:type_name -> xray.common.geodata.IPRule
+	10, // 2: xray.proxy.freedom.FinalRuleConfig.networks:type_name -> xray.common.net.Network
+	11, // 3: xray.proxy.freedom.FinalRuleConfig.port_list:type_name -> xray.common.net.PortList
+	12, // 4: xray.proxy.freedom.FinalRuleConfig.ip:type_name -> xray.common.geodata.IPRule
 	4,  // 5: xray.proxy.freedom.FinalRuleConfig.block_delay:type_name -> xray.proxy.freedom.Range
-	12, // 6: xray.proxy.freedom.Config.domain_strategy:type_name -> xray.transport.internet.DomainStrategy
+	13, // 6: xray.proxy.freedom.Config.domain_strategy:type_name -> xray.transport.internet.DomainStrategy
 	1,  // 7: xray.proxy.freedom.Config.destination_override:type_name -> xray.proxy.freedom.DestinationOverride
 	2,  // 8: xray.proxy.freedom.Config.fragment:type_name -> xray.proxy.freedom.Fragment
 	3,  // 9: xray.proxy.freedom.Config.noises:type_name -> xray.proxy.freedom.Noise
 	5,  // 10: xray.proxy.freedom.Config.final_rules:type_name -> xray.proxy.freedom.FinalRuleConfig
 	7,  // 11: xray.proxy.freedom.Config.tcp_fingerprint_settings:type_name -> xray.proxy.freedom.TCPFingerprintSettings
-	12, // [12:12] is the sub-list for method output_type
-	12, // [12:12] is the sub-list for method input_type
-	12, // [12:12] is the sub-list for extension type_name
-	12, // [12:12] is the sub-list for extension extendee
-	0,  // [0:12] is the sub-list for field type_name
+	8,  // 12: xray.proxy.freedom.Config.tcp_handshake_delay:type_name -> xray.proxy.freedom.TCPHandshakeDelay
+	13, // [13:13] is the sub-list for method output_type
+	13, // [13:13] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_proxy_freedom_config_proto_init() }
@@ -728,7 +795,7 @@ func file_proxy_freedom_config_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proxy_freedom_config_proto_rawDesc), len(file_proxy_freedom_config_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   7,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

@@ -31,24 +31,26 @@ import (
 )
 
 type tunFingerprintDialer struct {
-	ecnMode   string
-	profile   string
-	headers   *fingerprintIPHeaders
-	routeMu   sync.Mutex
-	mtu       uint32
-	subnet    tcpip.Subnet
-	stack     *stack.Stack
-	file      *os.File
-	link      *channel.Endpoint
-	ctx       context.Context
-	cancel    context.CancelFunc
-	mu        sync.Mutex
-	closed    bool
-	dialing   sync.WaitGroup
-	pumps     sync.WaitGroup
-	closeOnce sync.Once
-	closeErr  error
-	automatic *fingerprintnet.Network
+	handshakeDelay *synACKDelayer
+	delayRange     *TCPHandshakeDelay
+	ecnMode        string
+	profile        string
+	headers        *fingerprintIPHeaders
+	routeMu        sync.Mutex
+	mtu            uint32
+	subnet         tcpip.Subnet
+	stack          *stack.Stack
+	file           *os.File
+	link           *channel.Endpoint
+	ctx            context.Context
+	cancel         context.CancelFunc
+	mu             sync.Mutex
+	closed         bool
+	dialing        sync.WaitGroup
+	pumps          sync.WaitGroup
+	closeOnce      sync.Once
+	closeErr       error
+	automatic      *fingerprintnet.Network
 }
 
 func newFingerprintDialerFamily(c *Config, is6 bool) (fingerprintDialer, error) {
@@ -110,6 +112,10 @@ func newFingerprintDialerFamily(c *Config, is6 bool) (fingerprintDialer, error) 
 	})
 	lifetime, cancel := context.WithCancel(context.Background())
 	d := &tunFingerprintDialer{ecnMode: c.TcpEcn, profile: c.TcpFingerprint, stack: s, file: file, link: link, ctx: lifetime, cancel: cancel, automatic: automatic, mtu: mtu, headers: newFingerprintIPHeaders(c.TcpFingerprint)}
+	if c.TcpHandshakeDelay != nil && c.TcpHandshakeDelay.MaxMs != 0 {
+		d.delayRange = c.TcpHandshakeDelay
+		d.handshakeDelay = &synACKDelayer{pending: make(map[synACKFlow]*delayedSYNACK), inject: d.injectPacket}
+	}
 	ok := false
 	defer func() {
 		if !ok {
@@ -164,18 +170,25 @@ func (d *tunFingerprintDialer) readPackets() {
 		if n == 0 {
 			continue
 		}
-		protocol := ipv4.ProtocolNumber
-		switch data[0] >> 4 {
-		case 4:
-		case 6:
-			protocol = ipv6.ProtocolNumber
-		default:
+		if d.handshakeDelay != nil && d.handshakeDelay.enqueue(data[:n]) {
 			continue
 		}
-		packet := stack.NewPacketBuffer(stack.PacketBufferOptions{Payload: buffer.MakeWithData(data[:n])})
-		d.link.InjectInbound(protocol, packet)
-		packet.DecRef()
+		d.injectPacket(data[:n])
 	}
+}
+
+func (d *tunFingerprintDialer) injectPacket(data []byte) {
+	protocol := ipv4.ProtocolNumber
+	switch data[0] >> 4 {
+	case 4:
+	case 6:
+		protocol = ipv6.ProtocolNumber
+	default:
+		return
+	}
+	packet := stack.NewPacketBuffer(stack.PacketBufferOptions{Payload: buffer.MakeWithData(data)})
+	d.link.InjectInbound(protocol, packet)
+	packet.DecRef()
 }
 
 func (d *tunFingerprintDialer) writePackets() {
@@ -346,11 +359,30 @@ func (d *tunFingerprintDialer) dialWithMTU(ctx context.Context, address tcpip.Fu
 		return nil, fmt.Errorf("fingerprint ECN: %s", err)
 	}
 	xerrors.LogInfo(ctx, "TCP ECN freedom: selected=", mode, " source=", source, " fallback=", fallback, " profile=", d.profile)
+	// Keep SYN-ACK dispatch behind registration, including loopback-fast replies.
+	if d.handshakeDelay != nil {
+		d.handshakeDelay.mu.Lock()
+	}
 	d.routeMu.Lock()
 	d.stack.SetRouteTable([]tcpip.Route{{Destination: d.subnet, NIC: 1, MTU: mtu}})
 	err = ep.Connect(address)
 	d.stack.SetRouteTable([]tcpip.Route{{Destination: d.subnet, NIC: 1}})
 	d.routeMu.Unlock()
+	if d.handshakeDelay != nil {
+		if _, pending := err.(*tcpip.ErrConnectStarted); pending {
+			local, localErr := ep.GetLocalAddress()
+			if localErr != nil {
+				d.handshakeDelay.mu.Unlock()
+				return nil, fmt.Errorf("fingerprint handshake delay local address: %s", localErr)
+			}
+			delay := randomHandshakeDelay(d.delayRange)
+			key := synACKFlow{local: local.Addr, remote: address.Addr, localPort: local.Port, remotePort: address.Port}
+			stop := d.handshakeDelay.registerLocked(ctx, key, delay)
+			defer stop() // Stop delivery before the endpoint can close or reuse its port.
+			xerrors.LogInfo(ctx, "TCP handshake delay: selectedMs=", delay.Milliseconds(), " target=", address.Addr, ":", address.Port)
+		}
+		d.handshakeDelay.mu.Unlock()
+	}
 	if _, pending := err.(*tcpip.ErrConnectStarted); pending {
 		select {
 		case <-ctx.Done():

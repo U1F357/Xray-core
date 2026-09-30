@@ -67,6 +67,7 @@ message Config {
   string tcp_fingerprint_fallback = 11;
   // template (default), auto (ingress metadata), none, classic or accecn.
   string tcp_ecn = 12;
+  TCPHandshakeDelay tcp_handshake_delay = 13;
 }
 
 // Optional manual override. Omit to automatically provision the Linux network.
@@ -74,4 +75,10 @@ message Config {
 message TCPFingerprintSettings {
   string tun = 1;
   string address = 2;
+}
+
+// Delay delivery of the first SYN-ACK; inclusive millisecond bounds.
+message TCPHandshakeDelay {
+  uint32 min_ms = 1 [json_name = "minMs"];
+  uint32 max_ms = 2 [json_name = "maxMs"];
 }
