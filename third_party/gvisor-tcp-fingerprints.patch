@@ -1,5 +1,35 @@
+diff --git a/BUILD b/BUILD
+index 027e878..88578c4 100644
+--- a/BUILD
++++ b/BUILD
+@@ -219,3 +219,25 @@ exports_files([
+     "go.sum",
+     "go.mod",
+ ])
++
++# Generated Go sources for embedding this custom netstack in Go programs.
++go_path(
++    name = "netstack_gopath",
++    mode = "archive",
++    deps = [
++        "//pkg/tcpip/adapters/gonet",
++        "//pkg/tcpip/faketime",
++        "//pkg/tcpip/link/channel",
++        "//pkg/tcpip/link/ethernet",
++        "//pkg/tcpip/link/fdbased",
++        "//pkg/tcpip/link/loopback",
++        "//pkg/tcpip/link/sniffer",
++        "//pkg/tcpip/link/tun",
++        "//pkg/tcpip/network/arp",
++        "//pkg/tcpip/network/ipv4",
++        "//pkg/tcpip/network/ipv6",
++        "//pkg/tcpip/transport/icmp",
++        "//pkg/tcpip/transport/tcp",
++        "//pkg/tcpip/transport/udp",
++    ],
++)
 diff --git a/pkg/tcpip/tcpip.go b/pkg/tcpip/tcpip.go
-index e295f75..11867dc 100644
+index e295f75..8ee85b9 100644
 --- a/pkg/tcpip/tcpip.go
 +++ b/pkg/tcpip/tcpip.go
 @@ -1079,6 +1079,27 @@ type SettableTransportProtocolOption interface {
@@ -30,8 +60,45 @@ index e295f75..11867dc 100644
  // TCPSACKEnabled the SACK option for TCP.
  //
  // See: https://tools.ietf.org/html/rfc2018.
+@@ -2908,3 +2929,16 @@ func DeleteDanglingEndpoint(e Endpoint) {
+ // AsyncLoading is the global barrier for asynchronous endpoint loading
+ // activities.
+ var AsyncLoading sync.WaitGroup
++
++// TCPFingerprintECNOption selects ECN for one active TCP endpoint. It must be
++// set before Connect; zero leaves the platform preset in control.
++type TCPFingerprintECNOption uint8
++
++const (
++	TCPFingerprintECNTemplate TCPFingerprintECNOption = iota
++	TCPFingerprintECNNone
++	TCPFingerprintECNClassic
++	TCPFingerprintECNAccurate
++)
++
++func (*TCPFingerprintECNOption) isSettableSocketOption() {}
+diff --git a/pkg/tcpip/transport/tcp/BUILD b/pkg/tcpip/transport/tcp/BUILD
+index 5c27d03..7271718 100644
+--- a/pkg/tcpip/transport/tcp/BUILD
++++ b/pkg/tcpip/transport/tcp/BUILD
+@@ -148,6 +148,7 @@ go_library(
+         "connect.go",
+         "connect_unsafe.go",
+         "cubic.go",
++        "ecn.go",
+         "dispatcher.go",
+         "dispatcher_mutex.go",
+         "endpoint.go",
+@@ -217,6 +218,7 @@ go_test(
+     size = "small",
+     srcs = [
+         "cubic_test.go",
++        "ecn_test.go",
+         "endpoint_test.go",
+         "main_test.go",
+         "sack_scoreboard_test.go",
 diff --git a/pkg/tcpip/transport/tcp/connect.go b/pkg/tcpip/transport/tcp/connect.go
-index d6ad34e..588ed8b 100644
+index d6ad34e..02107d7 100644
 --- a/pkg/tcpip/transport/tcp/connect.go
 +++ b/pkg/tcpip/transport/tcp/connect.go
 @@ -74,8 +74,10 @@ type handshake struct {
@@ -58,7 +125,30 @@ index d6ad34e..588ed8b 100644
  
  	// Remember if the Timestamp option was negotiated.
  	h.ep.maybeEnableTimestamp(rcvSynOpts)
-@@ -367,15 +373,16 @@ func (h *handshake) synSentState(s *segment) tcpip.Error {
+@@ -337,8 +343,14 @@ func (h *handshake) synSentState(s *segment) tcpip.Error {
+ 	// If this is a SYN ACK response, we only need to acknowledge the SYN
+ 	// and the handshake is completed.
+ 	if s.flags.Contains(header.TCPFlagAck) {
++		h.ep.ecn.negotiate(s.flags, s.pkt.TransportHeader().Slice()[12]&1 != 0)
++		h.ep.ecn.acceptSynACK(s)
+ 		h.state = handshakeCompleted
+ 		h.transitionToStateEstablishedLocked(s)
++		if h.ep.ecn.synCongestion {
++			h.ep.snd.reduceOnLoss()
++			h.ep.snd.SndCwnd = min(h.ep.snd.SndCwnd, h.ep.snd.Ssthresh)
++		}
+ 
+ 		h.ep.sendEmptyRaw(header.TCPFlagAck, h.iss+1, h.ackNum, h.rcvWnd>>h.effectiveRcvWndScale())
+ 		return nil
+@@ -347,6 +359,7 @@ func (h *handshake) synSentState(s *segment) tcpip.Error {
+ 	// A SYN segment was received, but no ACK in it. We acknowledge the SYN
+ 	// but resend our own SYN and wait for it to be acknowledged in the
+ 	// SYN-RCVD state.
++	h.ep.ecn = classicECN{} // Simultaneous open retains upstream non-ECN behavior.
+ 	h.state = handshakeSynRcvd
+ 	ttl := calculateTTL(h.ep.route, h.ep.ipv4TTL, h.ep.ipv6HopLimit)
+ 	amss := h.ep.amss
+@@ -367,15 +380,16 @@ func (h *handshake) synSentState(s *segment) tcpip.Error {
  		ttl = h.ep.route.DefaultTTL()
  	}
  	h.ep.sendSynTCP(h.ep.route, tcpFields{
@@ -84,7 +174,7 @@ index d6ad34e..588ed8b 100644
  	}, synOpts)
  	return nil
  }
-@@ -458,15 +465,16 @@ func (h *handshake) synRcvdState(s *segment) tcpip.Error {
+@@ -458,15 +472,16 @@ func (h *handshake) synRcvdState(s *segment) tcpip.Error {
  			MSS:           h.ep.amss,
  		}
  		h.ep.sendSynTCP(h.ep.route, tcpFields{
@@ -110,13 +200,23 @@ index d6ad34e..588ed8b 100644
  		}, synOpts)
  		return nil
  	}
-@@ -573,6 +581,26 @@ func (h *handshake) processSegments() tcpip.Error {
+@@ -573,6 +588,36 @@ func (h *handshake) processSegments() tcpip.Error {
  // +checklocks:h.ep.mu
  func (h *handshake) start() {
  	h.startTime = h.ep.stack.Clock().NowMonotonic()
 +	if h.active {
 +		var profile tcpip.TCPFingerprintProfile
 +		if err := h.ep.stack.TransportProtocolOption(ProtocolNumber, &profile); err == nil {
++			mode := h.ep.fingerprintECN
++			if mode == tcpip.TCPFingerprintECNTemplate {
++				switch profile {
++				case tcpip.TCPFingerprintWindows, tcpip.TCPFingerprintMacOS:
++					mode = tcpip.TCPFingerprintECNClassic
++				default:
++					mode = tcpip.TCPFingerprintECNNone
++				}
++			}
++			h.ep.ecn = classicECN{offered: mode == tcpip.TCPFingerprintECNClassic || mode == tcpip.TCPFingerprintECNAccurate, accurateOffered: mode == tcpip.TCPFingerprintECNAccurate}
 +			h.fingerprintProfile = profile
 +			window := 0
 +			switch profile {
@@ -137,7 +237,7 @@ index d6ad34e..588ed8b 100644
  	h.ep.amss = calculateAdvertisedMSS(h.ep.userMSS, h.ep.route)
  	var sackEnabled tcpip.TCPSACKEnabled
  	if err := h.ep.stack.TransportProtocolOption(ProtocolNumber, &sackEnabled); err != nil {
-@@ -583,7 +611,7 @@ func (h *handshake) start() {
+@@ -583,7 +628,7 @@ func (h *handshake) start() {
  
  	synOpts := header.TCPSynOptions{
  		WS:            h.rcvWndScale,
@@ -146,7 +246,7 @@ index d6ad34e..588ed8b 100644
  		TSVal:         h.ep.tsValNow(),
  		TSEcr:         h.ep.recentTimestamp(),
  		SACKPermitted: bool(sackEnabled),
-@@ -604,15 +632,16 @@ func (h *handshake) start() {
+@@ -604,15 +649,16 @@ func (h *handshake) start() {
  
  	h.sendSYNOpts = synOpts
  	h.ep.sendSynTCP(h.ep.route, tcpFields{
@@ -172,9 +272,13 @@ index d6ad34e..588ed8b 100644
  	}, synOpts)
  }
  
-@@ -642,15 +671,16 @@ func (h *handshake) retransmitHandlerLocked() tcpip.Error {
+@@ -641,16 +687,20 @@ func (h *handshake) retransmitHandlerLocked() tcpip.Error {
+ 	// the connection with another ACK or data (as ACKs are never
  	// retransmitted on their own).
  	if h.active || !h.acked || h.deferAccept != 0 && e.stack.Clock().NowMonotonic().Sub(h.startTime) > h.deferAccept {
++		// Retry without ECN if the first SYN may have encountered an ECN black hole.
++		e.ecn.offered = false
++		e.ecn.accurateOffered = false
  		e.sendSynTCP(e.route, tcpFields{
 -			id:        e.TransportEndpointInfo.ID,
 -			ttl:       calculateTTL(e.route, e.ipv4TTL, e.ipv6HopLimit),
@@ -198,7 +302,7 @@ index d6ad34e..588ed8b 100644
  		}, h.sendSYNOpts)
  		// If we have ever retransmitted the SYN-ACK or
  		// SYN segment, we should only measure RTT if
-@@ -665,6 +695,17 @@ func (h *handshake) retransmitHandlerLocked() tcpip.Error {
+@@ -665,6 +715,17 @@ func (h *handshake) retransmitHandlerLocked() tcpip.Error {
  // initializes sender/receiver.
  // +checklocks:h.ep.mu
  func (h *handshake) transitionToStateEstablishedLocked(s *segment) {
@@ -216,7 +320,7 @@ index d6ad34e..588ed8b 100644
  	// Stop the SYN retransmissions now that handshake is complete.
  	if h.retransmitTimer != nil {
  		h.retransmitTimer.stop()
-@@ -769,6 +810,49 @@ func putOptions(options []byte) {
+@@ -769,6 +830,49 @@ func putOptions(options []byte) {
  	optionPool.Put(optionsToArray(options))
  }
  
@@ -266,7 +370,7 @@ index d6ad34e..588ed8b 100644
  func makeSynOptions(opts header.TCPSynOptions) []byte {
  	// Emulate linux option order. This is as follows:
  	//
-@@ -825,21 +909,29 @@ func makeSynOptions(opts header.TCPSynOptions) []byte {
+@@ -825,21 +929,44 @@ func makeSynOptions(opts header.TCPSynOptions) []byte {
  // tcpFields is a struct to carry different parameters required by the
  // send*TCP variant functions below.
  type tcpFields struct {
@@ -281,6 +385,8 @@ index d6ad34e..588ed8b 100644
 -	txHash    uint32
 -	df        bool
 -	expOptVal uint16
++	ae                 bool
++	accurate           bool
 +	id                 stack.TransportEndpointID
 +	ttl                uint8
 +	tos                uint8
@@ -297,6 +403,19 @@ index d6ad34e..588ed8b 100644
  
  func (e *Endpoint) sendSynTCP(r *stack.Route, tf tcpFields, opts header.TCPSynOptions) tcpip.Error {
 -	tf.opts = makeSynOptions(opts)
++	if e.ecn.offered && tf.flags == header.TCPFlagSyn {
++		tf.flags |= header.TCPFlagEce | header.TCPFlagCwr
++		tf.ae = e.ecn.accurateOffered
++		if e.ecn.accurateOffered && tf.fingerprintProfile == tcpip.TCPFingerprintMacOS {
++			tf.tos = (tf.tos &^ 3) | 1
++		} else if tf.fingerprintProfile == tcpip.TCPFingerprintWindows {
++			// Match the supplied Windows SYN; macOS uses Not-ECT.
++			tf.tos = (tf.tos &^ 3) | 2
++		}
++	}
++	if e.ecn.offered {
++		e.ecn.synECN = tf.tos & 3
++	}
 +	switch tf.fingerprintProfile {
 +	case tcpip.TCPFingerprintWindows:
 +		tf.opts = makeWindowsSynOptions(opts)
@@ -308,8 +427,605 @@ index d6ad34e..588ed8b 100644
  	// We ignore SYN send errors and let the callers re-attempt send.
  	hdrSize := header.TCPMinimumSize + int(r.MaxHeaderLength()) + len(tf.opts)
  	if r.NetProto() == header.IPv6ProtocolNumber && tf.expOptVal != 0 {
+@@ -860,10 +987,24 @@ func (e *Endpoint) sendSynTCP(r *stack.Route, tf tcpFields, opts header.TCPSynOp
+ // This method takes ownership of pkt.
+ func (e *Endpoint) sendTCP(r *stack.Route, tf tcpFields, pkt *stack.PacketBuffer, gso stack.GSO) tcpip.Error {
+ 	tf.txHash = e.txHash
++	newData := e.snd != nil && !e.snd.zeroWindowProbing && pkt.Data().Size() > 0 && !tf.seq.LessThan(e.snd.SndNxt)
++	cwr := e.ecn.prepare(&tf, newData)
+ 	if err := sendTCP(r, tf, pkt, gso, e.owner); err != nil {
+ 		e.stats.SendErrors.SegmentSendToNetworkFailed.Increment()
+ 		return err
+ 	}
++	if cwr {
++		e.ecn.pendingCWR = false
++	}
++	if e.ecn.accurate && tf.flags.Contains(header.TCPFlagAck) {
++		if !e.ecn.thirdACKPending && !e.ecn.ackOfACK {
++			e.ecn.dsackPending = false
++		}
++		e.ecn.thirdACKPending = false
++		e.ecn.ackOfACK = false
++		e.ecn.ceSinceACK = 0
++		e.ecn.forceACK = false
++	}
+ 	e.stats.SegmentsSent.Increment()
+ 	return nil
+ }
+@@ -881,6 +1022,9 @@ func buildTCPHdr(r *stack.Route, tf tcpFields, pkt *stack.PacketBuffer, gso stac
+ 		Flags:      tf.flags,
+ 		WindowSize: uint16(tf.rcvWnd),
+ 	})
++	if tf.ae {
++		tcp[12] |= 1
++	}
+ 	copy(tcp[header.TCPMinimumSize:], tf.opts)
+ 
+ 	xsum := r.PseudoHeaderChecksum(ProtocolNumber, uint16(pkt.Size()))
+@@ -936,6 +1080,10 @@ func sendTCPBatch(r *stack.Route, tf tcpFields, pkt *stack.PacketBuffer, gso sta
+ 
+ 		buildTCPHdr(r, tf, pkt, gso)
+ 		tf.seq = tf.seq.Add(seqnum.Size(packetSize))
++		// CWR belongs only to the first segment of a GSO batch.
++		if !tf.ae && !tf.accurate {
++			tf.flags &^= header.TCPFlagCwr
++		}
+ 		pkt.GSOOptions = gso
+ 		if err := r.WritePacket(stack.NetworkHeaderParams{
+ 			Protocol:              ProtocolNumber,
+@@ -996,6 +1144,29 @@ func sendTCP(r *stack.Route, tf tcpFields, pkt *stack.PacketBuffer, gso stack.GS
+ //
+ // +checklocks:e.mu
+ func (e *Endpoint) makeOptions(sackBlocks []header.SACKBlock) []byte {
++	if e.ecn.accurate && (e.ecn.thirdACKPending || e.ecn.ackOfACK) {
++		sackBlocks = nil
++	} else if e.ecn.accurate && e.ecn.dsackPending && e.SACKPermitted {
++		blocks := make([]header.SACKBlock, 0, len(sackBlocks)+2)
++		blocks = append(blocks, e.ecn.dsack)
++		containing := e.ecn.dsackContaining
++		if containing.Start != containing.End {
++			for _, block := range sackBlocks {
++				if !e.ecn.dsack.Start.LessThan(block.Start) && !block.End.LessThan(e.ecn.dsack.End) {
++					containing = block
++					break
++				}
++			}
++			blocks = append(blocks, containing)
++		}
++		for _, block := range sackBlocks {
++			if block != containing {
++				blocks = append(blocks, block)
++			}
++		}
++		sackBlocks = blocks
++	}
++
+ 	options := getOptions()
+ 	offset := 0
+ 
+@@ -1335,6 +1506,19 @@ func (e *Endpoint) handleSegmentLocked(s *segment) (cont bool, err tcpip.Error)
+ 			return false, err
+ 		}
+ 	} else if s.flags.Contains(header.TCPFlagSyn) {
++		if e.ecn.accurate && s.flags.Contains(header.TCPFlagAck) &&
++			s.sequenceNumber == e.ecn.peerSYNSeq && s.ackNumber == e.ecn.localSYNAck {
++			code := uint8(s.flags >> 6)
++			if s.pkt.TransportHeader().Slice()[12]&1 != 0 {
++				code |= 4
++			}
++			if code >= 2 && code <= 6 {
++				e.ecn.acceptSynACK(s)
++				ack, wnd := e.rcv.getSendParams()
++				e.sendEmptyRaw(header.TCPFlagAck, e.snd.SndNxt, ack, wnd)
++				return true, nil
++			}
++		}
+ 		// See: https://tools.ietf.org/html/rfc5961#section-4.1
+ 		//   1) If the SYN bit is set, irrespective of the sequence number, TCP
+ 		//    MUST send an ACK (also referred to as challenge ACK) to the remote
+@@ -1389,6 +1573,10 @@ func (e *Endpoint) handleSegmentLocked(s *segment) (cont bool, err tcpip.Error)
+ 		}
+ 
+ 		e.snd.handleRcvdSegment(s)
++		if e.ecn.forceACK {
++			e.ecn.forceACK = false
++			e.snd.sendAck()
++		}
+ 	}
+ 
+ 	return true, nil
+diff --git a/pkg/tcpip/transport/tcp/ecn.go b/pkg/tcpip/transport/tcp/ecn.go
+new file mode 100644
+index 0000000..48655c9
+--- /dev/null
++++ b/pkg/tcpip/transport/tcp/ecn.go
+@@ -0,0 +1,253 @@
++// Copyright 2026 The gVisor Authors.
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//     http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++package tcp
++
++import (
++	"gvisor.dev/gvisor/pkg/tcpip/header"
++	"gvisor.dev/gvisor/pkg/tcpip/seqnum"
++)
++
++// classicECN implements the feedback state of RFC 3168. It is deliberately
++// separate from the fingerprint's SYN layout: advertising ECN obliges the
++// endpoint to echo CE and respond to ECE for the lifetime of the connection.
++// The zero value preserves upstream non-ECN behavior.
++//
++// +stateify savable
++type classicECN struct {
++	offered         bool
++	enabled         bool
++	echo            bool
++	pendingCWR      bool
++	reduced         bool
++	recoveryEnd     seqnum.Value
++	accurateOffered bool
++	accurate        bool
++	rxCE            uint8
++	txACE           uint8
++	ceSinceACK      uint8
++	thirdACKPending bool
++	thirdACKCode    uint8
++	synCESeen       bool
++	synCongestion   bool
++	peerSYNSeq      seqnum.Value
++	localSYNAck     seqnum.Value
++	feedbackAck     seqnum.Value
++	feedbackSeq     seqnum.Value
++	feedbackTS      uint32
++	feedbackSeen    bool
++	ackOfACK        bool
++	disableECT      bool
++	synECN          byte
++	forceACK        bool
++	dsackPending    bool
++	dsack           header.SACKBlock
++	dsackContaining header.SACKBlock
++}
++
++func (c *classicECN) negotiate(flags header.TCPFlags, ae bool) {
++	code := uint8(flags >> 6)
++	if ae {
++		code |= 4
++	}
++	if c.offered && c.accurateOffered && code >= 2 && code <= 6 {
++		c.enabled, c.accurate = true, true
++		c.rxCE, c.txACE = 5, 5
++		c.synCongestion = code == 6
++		expected := [4]uint8{2, 3, 4, 6}[c.synECN]
++		c.disableECT = code != expected && code != 5 && !(code == 6 && c.synECN != 0)
++	} else {
++		c.enabled = c.offered && !ae && code == 1
++	}
++	c.offered, c.accurateOffered = false, false
++}
++
++func segmentECN(s *segment) byte {
++	ip := s.pkt.NetworkHeader().Slice()
++	switch s.pkt.NetworkProtocolNumber {
++	case header.IPv4ProtocolNumber:
++		return ip[1] & 3
++	case header.IPv6ProtocolNumber:
++		return (ip[1] >> 4) & 3
++	default:
++		return 0
++	}
++}
++
++func (c *classicECN) acceptSynACK(s *segment) {
++	if !c.accurate {
++		return
++	}
++	c.peerSYNSeq, c.localSYNAck = s.sequenceNumber, s.ackNumber
++	c.thirdACKPending = true
++	c.thirdACKCode = [4]uint8{2, 3, 4, 6}[segmentECN(s)]
++	if segmentECN(s) == 3 && !c.synCESeen {
++		c.rxCE++
++		c.synCESeen = true
++	}
++	if !c.feedbackSeen {
++		c.feedbackAck, c.feedbackSeq, c.feedbackTS = s.ackNumber, s.sequenceNumber, s.parsedOptions.TSVal
++		c.feedbackSeen = true
++	}
++}
++
++// prepare never marks pure ACKs, retransmissions, or resets ECT, and puts CWR
++// only on new data. The caller consumes pendingCWR after a successful send.
++func (c *classicECN) prepare(tf *tcpFields, newData bool) bool {
++	if !c.enabled || tf.flags&(header.TCPFlagSyn|header.TCPFlagRst) != 0 {
++		return false
++	}
++	if c.accurate {
++		code := c.rxCE & 7
++		if c.thirdACKPending && !newData {
++			code = c.thirdACKCode
++		}
++		tf.flags = (tf.flags &^ (header.TCPFlagEce | header.TCPFlagCwr)) | header.TCPFlags(code&3)<<6
++		tf.ae = code&4 != 0
++		tf.accurate = true
++		if newData && !c.disableECT {
++			tf.tos = (tf.tos &^ 3) | 2
++		}
++		return false
++	}
++	if c.echo && tf.flags.Contains(header.TCPFlagAck) {
++		tf.flags |= header.TCPFlagEce
++	}
++	if !newData {
++		return false
++	}
++	tf.tos = (tf.tos &^ 3) | 2
++	if c.pendingCWR {
++		tf.flags |= header.TCPFlagCwr
++		return true
++	}
++	return false
++}
++
++// +checklocks:e.mu
++func (e *Endpoint) receiveECN(s *segment) {
++	if !e.ecn.enabled || (e.snd != nil && e.snd.SndNxt.LessThan(s.ackNumber)) {
++		return
++	}
++	if e.ecn.accurate {
++		if segmentECN(s) == 3 {
++			e.ecn.rxCE = (e.ecn.rxCE + 1) & 7
++			e.ecn.ceSinceACK++
++			// ACK each marked data packet. Pure ACKs are acknowledged only
++			// once per three CE marks, avoiding an ACK-of-ACK feedback loop.
++			if s.payloadSize() > 0 || e.ecn.ceSinceACK >= 3 {
++				e.ecn.ackOfACK = s.payloadSize() == 0
++				e.ecn.forceACK = true
++			}
++		}
++		return
++	}
++	if s.flags.Contains(header.TCPFlagCwr) {
++		e.ecn.echo = false
++	}
++	// RFC 3168 feeds back congestion on data, not pure ACKs. CE takes
++	// precedence when the same packet also carries CWR.
++	if s.payloadSize() == 0 {
++		return
++	}
++	if segmentECN(s) == 3 {
++		e.ecn.echo = true
++	}
++}
++
++// +checklocks:s.ep.mu
++func (s *sender) handleECNEcho(seg *segment) {
++	c := &s.ep.ecn
++	ack := seg.ackNumber
++	if !c.enabled || ack.LessThan(s.SndUna) || s.SndNxt.LessThan(ack) {
++		return
++	}
++	// Retire old sequence boundaries promptly, including on non-ECE ACKs,
++	// so a long-lived connection remains correct across sequence wrap.
++	if c.reduced && c.recoveryEnd.LessThan(ack) {
++		c.reduced = false
++	}
++	congestion := seg.flags.Contains(header.TCPFlagEce)
++	if c.accurate {
++		congestion = s.accurateECNFeedback(seg)
++	}
++	if s.SndUna == s.SndNxt || !congestion || c.reduced {
++		return
++	}
++	// Loss recovery already reduced the window for this flight. ECN must
++	// not cause a second reduction for the same congestion episode.
++	if !s.FastRecovery.Active {
++		s.cc.HandleLossDetected()
++		s.SndCwnd = min(s.SndCwnd, s.Ssthresh)
++		s.SndCAAckCount = 0
++	}
++	c.reduced = true
++	c.recoveryEnd = s.SndNxt
++	c.pendingCWR = true
++}
++
++// reduceOnLoss shares the congestion episode boundary with ECN, so losing a
++// packet from the CE-marked flight does not halve the window a second time.
++// +checklocks:s.ep.mu
++func (s *sender) reduceOnLoss() {
++	c := &s.ep.ecn
++	if !c.enabled {
++		s.cc.HandleLossDetected()
++		return
++	}
++	if !c.reduced || c.recoveryEnd.LessThan(s.SndUna) {
++		s.cc.HandleLossDetected()
++	}
++	c.reduced = true
++	c.recoveryEnd = s.SndNxt
++	c.pendingCWR = true
++}
++
++// accurateECNFeedback ignores superseded feedback and conservatively assumes
++// counter wrap when one ACK covers at least eight full-sized segments. This is
++// the ACE-only safety approach of RFC 9768 Appendix A.2.1; no byte options or
++// scalable/L4S congestion controller is claimed.
++// +checklocks:s.ep.mu
++func (s *sender) accurateECNFeedback(seg *segment) bool {
++	c := &s.ep.ecn
++	ack, seq := seg.ackNumber, seg.sequenceNumber
++	if ack.LessThan(c.feedbackAck) {
++		return false
++	}
++	advance := c.feedbackAck.LessThan(ack) || c.feedbackSeq.LessThan(seq) || seg.hasNewSACKInfo
++	if seg.parsedOptions.TS {
++		if int32(seg.parsedOptions.TSVal-c.feedbackTS) < 0 && ack == c.feedbackAck {
++			return false
++		}
++		advance = advance || int32(seg.parsedOptions.TSVal-c.feedbackTS) > 0
++	}
++	if !advance {
++		return false
++	}
++	if ack == c.feedbackAck && seq.LessThan(c.feedbackSeq) {
++		return false
++	}
++	code := uint8(seg.flags >> 6)
++	if seg.pkt.TransportHeader().Slice()[12]&1 != 0 {
++		code |= 4
++	}
++	delta := int((code - c.txACE) & 7)
++	packets := int(c.feedbackAck.Size(ack)) / max(1, s.MaxPayloadSize)
++	if packets >= delta+8 {
++		delta = packets - (packets-delta)%8
++	}
++	c.txACE = code
++	c.feedbackAck, c.feedbackSeq, c.feedbackTS = ack, seq, seg.parsedOptions.TSVal
++	return delta > 0
++}
+diff --git a/pkg/tcpip/transport/tcp/ecn_test.go b/pkg/tcpip/transport/tcp/ecn_test.go
+new file mode 100644
+index 0000000..13e8cb4
+--- /dev/null
++++ b/pkg/tcpip/transport/tcp/ecn_test.go
+@@ -0,0 +1,192 @@
++// Copyright 2026 The gVisor Authors.
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//     http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++package tcp
++
++import (
++	"gvisor.dev/gvisor/pkg/tcpip/header"
++	"gvisor.dev/gvisor/pkg/tcpip/seqnum"
++	"gvisor.dev/gvisor/pkg/tcpip/stack"
++	"testing"
++
++	"gvisor.dev/gvisor/pkg/buffer"
++)
++
++func TestClassicECNNegotiation(t *testing.T) {
++	for _, offer := range []bool{false, true} {
++		for _, ae := range []bool{false, true} {
++			for bits := 0; bits < 4; bits++ {
++				c := classicECN{offered: offer}
++				c.negotiate(header.TCPFlagSyn|header.TCPFlagAck|header.TCPFlags(bits<<6), ae)
++				want := offer && !ae && bits == 1
++				if c.enabled != want || c.offered {
++					t.Fatalf("offer=%v ae=%v bits=%d: %+v", offer, ae, bits, c)
++				}
++			}
++		}
++	}
++}
++
++func TestClassicECNOutgoing(t *testing.T) {
++	for _, enabled := range []bool{false, true} {
++		for _, fresh := range []bool{false, true} {
++			for _, flags := range []header.TCPFlags{header.TCPFlagAck, header.TCPFlagRst | header.TCPFlagAck, header.TCPFlagSyn} {
++				c := classicECN{enabled: enabled, echo: true, pendingCWR: true}
++				tf := tcpFields{flags: flags, tos: 0x28}
++				cwr := c.prepare(&tf, fresh)
++				active := enabled && flags == header.TCPFlagAck
++				wantFlags := flags
++				wantTOS := uint8(0x28)
++				if active {
++					wantFlags |= header.TCPFlagEce
++					if fresh {
++						wantFlags |= header.TCPFlagCwr
++						wantTOS |= 2
++					}
++				}
++				if tf.flags != wantFlags || tf.tos != wantTOS || cwr != (active && fresh) || !c.pendingCWR {
++					t.Fatalf("enabled=%v fresh=%v flags=%x: %+v", enabled, fresh, flags, tf)
++				}
++			}
++		}
++	}
++}
++
++func TestClassicECNReceiveFeedback(t *testing.T) {
++	for _, v6 := range []bool{false, true} {
++		ep := Endpoint{ecn: classicECN{enabled: true}}
++		pkt := stack.NewPacketBuffer(stack.PacketBufferOptions{ReserveHeaderBytes: 60})
++		pkt.NetworkProtocolNumber = header.IPv4ProtocolNumber
++		ip := pkt.NetworkHeader().Push(20)
++		ip[0] = 0x45
++		ip[1] = 3
++		if v6 {
++			pkt.DecRef()
++			pkt = stack.NewPacketBuffer(stack.PacketBufferOptions{ReserveHeaderBytes: 60})
++			pkt.NetworkProtocolNumber = header.IPv6ProtocolNumber
++			ip = pkt.NetworkHeader().Push(40)
++			ip[0] = 0x60
++			ip[1] = 0x30
++		}
++		// payloadSize uses the packet data, not the network header.
++		seg := segment{pkt: pkt, flags: header.TCPFlagAck}
++		ep.receiveECN(&seg)
++		if ep.ecn.echo {
++			t.Fatal("CE on a pure ACK must not latch ECE")
++		}
++		ep.ecn.echo = true
++		seg.flags |= header.TCPFlagCwr
++		ep.receiveECN(&seg)
++		if ep.ecn.echo {
++			t.Fatal("CWR did not clear ECE")
++		}
++		pkt.Data().AppendView(buffer.NewViewWithData([]byte{1}))
++		ep.receiveECN(&seg)
++		if !ep.ecn.echo {
++			t.Fatal("CE must override CWR on marked data")
++		}
++		if v6 {
++			ip[1] = 0
++		} else {
++			ip[1] = 0
++		}
++		seg.flags = header.TCPFlagAck
++		ep.receiveECN(&seg)
++		if !ep.ecn.echo {
++			t.Fatal("ECE must persist until CWR")
++		}
++		seg.flags |= header.TCPFlagCwr
++		ep.receiveECN(&seg)
++		if ep.ecn.echo {
++			t.Fatal("unmarked CWR must clear ECE")
++		}
++		pkt.DecRef()
++	}
++}
++
++func TestClassicECNWindowReduction(t *testing.T) {
++	ep := Endpoint{ecn: classicECN{enabled: true}}
++	s := sender{ep: &ep}
++	s.SndUna = 100
++	s.SndNxt = 200
++	s.SndCwnd = 20
++	s.Outstanding = 20
++	s.Ssthresh = 1000
++	s.cc = newRenoCC(&s)
++	seg := segment{flags: header.TCPFlagAck | header.TCPFlagEce, ackNumber: 150}
++	s.handleECNEcho(&seg)
++	if s.SndCwnd != 10 || s.Ssthresh != 10 || !ep.ecn.pendingCWR {
++		t.Fatalf("no congestion response: cwnd=%d threshold=%d", s.SndCwnd, s.Ssthresh)
++	}
++	for _, ack := range []seqnum.Value{99, 150, 160, 200, 201} {
++		seg.ackNumber = ack
++		s.handleECNEcho(&seg)
++		if s.SndCwnd != 10 {
++			t.Fatalf("repeat or invalid ACK %d reduced twice", ack)
++		}
++	}
++	s.SndUna = 200
++	s.SndNxt = 300
++	s.Outstanding = 10
++	seg.ackNumber = 250
++	s.handleECNEcho(&seg)
++	if s.SndCwnd != 5 {
++		t.Fatalf("new flight did not reduce: %d", s.SndCwnd)
++	}
++}
++
++func TestAccECNSenderWrapAndOrdering(t *testing.T) {
++	ep := Endpoint{ecn: classicECN{enabled: true, accurate: true, txACE: 5, feedbackAck: 100, feedbackSeq: 10, feedbackSeen: true}}
++	s := sender{ep: &ep}
++	s.SndUna = 100
++	s.SndNxt = 2000
++	s.SndCwnd = 20
++	s.Outstanding = 20
++	s.MaxPayloadSize = 100
++	s.Ssthresh = 1000
++	s.cc = newRenoCC(&s)
++	pkt := stack.NewPacketBuffer(stack.PacketBufferOptions{ReserveHeaderBytes: 20})
++	defer pkt.DecRef()
++	h := pkt.TransportHeader().Push(20)
++	h[12] = 0x51
++	seg := segment{pkt: pkt, flags: header.TCPFlagAck | header.TCPFlagEce, ackNumber: 900, sequenceNumber: 11}
++	// ACE stays at 5, but an ACK covering eight MSS can hide a full wrap.
++	s.handleECNEcho(&seg)
++	if s.SndCwnd != 10 {
++		t.Fatalf("ambiguous ACE wrap did not reduce cwnd: %d", s.SndCwnd)
++	}
++	seg.ackNumber = 800
++	seg.sequenceNumber = 10
++	seg.flags = header.TCPFlagAck | header.TCPFlagCwr // delayed ACE 6
++	s.handleECNEcho(&seg)
++	if ep.ecn.txACE != 5 || s.SndCwnd != 10 {
++		t.Fatal("superseded ACK changed ECN state")
++	}
++	seg.ackNumber = 1000
++	seg.sequenceNumber = 12
++	s.handleECNEcho(&seg)
++	if ep.ecn.txACE != 6 || s.SndCwnd != 10 {
++		t.Fatal("same flight reduced more than once")
++	}
++	s.SndUna = 2000
++	s.SndNxt = 3000
++	s.Outstanding = 10
++	seg.ackNumber = 2100
++	seg.sequenceNumber = 13
++	seg.flags |= header.TCPFlagEce // ACE 7
++	s.handleECNEcho(&seg)
++	if s.SndCwnd != 5 {
++		t.Fatalf("next flight did not reduce: %d", s.SndCwnd)
++	}
++}
+diff --git a/pkg/tcpip/transport/tcp/endpoint.go b/pkg/tcpip/transport/tcp/endpoint.go
+index 6238647..7767200 100644
+--- a/pkg/tcpip/transport/tcp/endpoint.go
++++ b/pkg/tcpip/transport/tcp/endpoint.go
+@@ -561,6 +561,10 @@ type Endpoint struct {
+ 	// applied while sending packets. Defaults to 0 as on Linux.
+ 	sendTOS uint8
+ 
++	// ecn is enabled only by the custom active-open fingerprint profiles.
++	ecn            classicECN
++	fingerprintECN tcpip.TCPFingerprintECNOption
++
+ 	gso stack.GSO
+ 
+ 	stats Stats
+@@ -2032,6 +2036,17 @@ func (e *Endpoint) HasNIC(id int32) bool {
+ // +checklocksexclude:e.pendingProcessingMu
+ func (e *Endpoint) SetSockOpt(opt tcpip.SettableSocketOption) tcpip.Error {
+ 	switch v := opt.(type) {
++	case *tcpip.TCPFingerprintECNOption:
++		e.LockUser()
++		defer e.UnlockUser()
++		if *v > tcpip.TCPFingerprintECNAccurate {
++			return &tcpip.ErrInvalidOptionValue{}
++		}
++		if e.EndpointState() != StateInitial && e.EndpointState() != StateBound {
++			return &tcpip.ErrInvalidEndpointState{}
++		}
++		e.fingerprintECN = *v
++
+ 	case *tcpip.KeepaliveIdleOption:
+ 		e.LockUser()
+ 		e.keepalive.Lock()
 diff --git a/pkg/tcpip/transport/tcp/protocol.go b/pkg/tcpip/transport/tcp/protocol.go
-index a3c8295..29b6db1 100644
+index a3c8295..3c27cd5 100644
 --- a/pkg/tcpip/transport/tcp/protocol.go
 +++ b/pkg/tcpip/transport/tcp/protocol.go
 @@ -85,6 +85,26 @@ const (
@@ -386,6 +1102,133 @@ index a3c8295..29b6db1 100644
  		congestionControl:          cc,
  		availableCongestionControl: []string{ccReno, ccCubic},
  		moderateReceiveBuffer:      true,
+diff --git a/pkg/tcpip/transport/tcp/rack.go b/pkg/tcpip/transport/tcp/rack.go
+index 1840760..36f1c88 100644
+--- a/pkg/tcpip/transport/tcp/rack.go
++++ b/pkg/tcpip/transport/tcp/rack.go
+@@ -281,7 +281,7 @@ func (s *sender) detectTLPRecovery(ack seqnum.Value, rcvdSeg *segment) {
+ 			// Step 2. Either the original packet or the retransmission (in the
+ 			// form of a probe) was lost. Invoke a congestion control response
+ 			// equivalent to fast recovery.
+-			s.cc.HandleLossDetected()
++			s.reduceOnLoss()
+ 			s.enterRecovery()
+ 			s.leaveRecovery()
+ 		}
+@@ -433,7 +433,7 @@ func (rc *rackControl) reorderTimerExpired() tcpip.Error {
+ 
+ 	fastRetransmit := false
+ 	if !rc.snd.FastRecovery.Active {
+-		rc.snd.cc.HandleLossDetected()
++		rc.snd.reduceOnLoss()
+ 		rc.snd.enterRecovery()
+ 		fastRetransmit = true
+ 	}
+diff --git a/pkg/tcpip/transport/tcp/rcv.go b/pkg/tcpip/transport/tcp/rcv.go
+index 7370fe9..353b91a 100644
+--- a/pkg/tcpip/transport/tcp/rcv.go
++++ b/pkg/tcpip/transport/tcp/rcv.go
+@@ -459,6 +459,37 @@ func (r *receiver) handleRcvdSegment(s *segment) (drop bool, err tcpip.Error) {
+ 	segLen := seqnum.Size(s.payloadSize())
+ 	segSeq := s.sequenceNumber
+ 
++	// AccECN with SACK also implements receiver D-SACK (RFC 9768 3.1.1).
++	// Report duplicate bytes below RCV.NXT, or a duplicate range already
++	// represented in the out-of-order SACK scoreboard.
++	if r.ep.ecn.accurate && r.ep.SACKPermitted && segLen > 0 {
++		end := segSeq.Add(segLen)
++		if segSeq.LessThan(r.RcvNxt) {
++			if r.RcvNxt.LessThan(end) {
++				end = r.RcvNxt
++			}
++			r.ep.ecn.dsack = header.SACKBlock{Start: segSeq, End: end}
++			r.ep.ecn.dsackContaining = header.SACKBlock{}
++			r.ep.ecn.dsackPending = true
++		} else {
++			for _, block := range r.ep.sack.Blocks[:r.ep.sack.NumBlocks] {
++				start, duplicateEnd := segSeq, end
++				if start.LessThan(block.Start) {
++					start = block.Start
++				}
++				if block.End.LessThan(duplicateEnd) {
++					duplicateEnd = block.End
++				}
++				if start.LessThan(duplicateEnd) {
++					r.ep.ecn.dsack = header.SACKBlock{Start: start, End: duplicateEnd}
++					r.ep.ecn.dsackContaining = block
++					r.ep.ecn.dsackPending = true
++					break
++				}
++			}
++		}
++	}
++
+ 	// If the sequence number range is outside the acceptable range, just
+ 	// send an ACK and stop further processing of the segment.
+ 	// This is according to RFC 793, page 68.
+@@ -474,6 +505,9 @@ func (r *receiver) handleRcvdSegment(s *segment) (drop bool, err tcpip.Error) {
+ 		}
+ 	}
+ 
++	// Update ECN feedback only after validating the receive sequence window.
++	r.ep.receiveECN(s)
++
+ 	// Store the time of the last ack. Use the segment's ingress time rather than
+ 	// the current clock so a segment delayed inside the stack before processing
+ 	// records when it actually arrived (consumed by the user-timeout check).
+diff --git a/pkg/tcpip/transport/tcp/snd.go b/pkg/tcpip/transport/tcp/snd.go
+index b9227e0..46bafd8 100644
+--- a/pkg/tcpip/transport/tcp/snd.go
++++ b/pkg/tcpip/transport/tcp/snd.go
+@@ -633,6 +633,11 @@ func (s *sender) retransmitTimerExpired() tcpip.Error {
+ 
+ 	s.state = tcpip.RTORecovery
+ 	s.cc.HandleRTOExpired()
++	if s.ep.ecn.enabled {
++		s.ep.ecn.reduced = true
++		s.ep.ecn.recoveryEnd = s.SndNxt
++		s.ep.ecn.pendingCWR = true
++	}
+ 
+ 	// Mark the next segment to be sent as the first unacknowledged one and
+ 	// start sending again. Set the number of outstanding packets to 0 so
+@@ -1309,7 +1314,7 @@ func (s *sender) detectLoss(seg *segment) (fastRetransmit bool) {
+ 		s.DupAckCount = 0
+ 		return false
+ 	}
+-	s.cc.HandleLossDetected()
++	s.reduceOnLoss()
+ 	s.enterRecovery()
+ 	return true
+ }
+@@ -1595,6 +1600,7 @@ func (s *sender) handleRcvdSegment(rcvdSeg *segment) {
+ 	}
+ 
+ 	ack := rcvdSeg.ackNumber
++	s.handleECNEcho(rcvdSeg)
+ 	fastRetransmit := false
+ 	// Do not leave fast recovery, if the ACK is out of range.
+ 	if s.FastRecovery.Active {
+@@ -1729,7 +1735,9 @@ func (s *sender) handleRcvdSegment(rcvdSeg *segment) {
+ 		// If we are not in fast recovery then update the congestion
+ 		// window based on the number of acknowledged packets.
+ 		if !s.FastRecovery.Active {
+-			s.cc.Update(originalOutstanding-s.Outstanding, bestRTT, rcvdSeg.rcvdTime)
++			if !s.ep.ecn.reduced || s.ep.ecn.recoveryEnd.LessThan(s.SndUna) {
++				s.cc.Update(originalOutstanding-s.Outstanding, bestRTT, rcvdSeg.rcvdTime)
++			}
+ 			if s.FastRecovery.Last.LessThan(s.SndUna) {
+ 				s.state = tcpip.Open
+ 				// Update RACK when we are exiting fast or RTO
+@@ -1779,7 +1787,7 @@ func (s *sender) handleRcvdSegment(rcvdSeg *segment) {
+ 			// If any segment is marked as lost by
+ 			// RACK, enter recovery and retransmit
+ 			// the lost segments.
+-			s.cc.HandleLossDetected()
++			s.reduceOnLoss()
+ 			s.enterRecovery()
+ 			fastRetransmit = true
+ 		}
 diff --git a/pkg/tcpip/transport/tcp/test/e2e/BUILD b/pkg/tcpip/transport/tcp/test/e2e/BUILD
 index 87a1ca6..f8b5480 100644
 --- a/pkg/tcpip/transport/tcp/test/e2e/BUILD
@@ -409,40 +1252,12 @@ index 87a1ca6..f8b5480 100644
 +        "//pkg/waiter",
 +    ],
 +)
-diff --git a/pkg/tcpip/transport/tcp/testing/context/context.go b/pkg/tcpip/transport/tcp/testing/context/context.go
-index 007f9ba..19d7ae2 100644
---- a/pkg/tcpip/transport/tcp/testing/context/context.go
-+++ b/pkg/tcpip/transport/tcp/testing/context/context.go
-@@ -118,6 +118,9 @@ type Headers struct {
- 
- // Options contains options for creating a new test context.
- type Options struct {
-+	// UseDefaultTCPFingerprint retains the fork default for profile tests.
-+	UseDefaultTCPFingerprint bool
-+
- 	// EnableV4 indicates whether IPv4 should be enabled.
- 	EnableV4 bool
- 
-@@ -215,6 +218,13 @@ func NewWithOpts(t *testing.T, opts Options) *Context {
- 		stackOpts.NetworkProtocols = append(stackOpts.NetworkProtocols, ipv6.NewProtocol)
- 	}
- 	s := stack.New(stackOpts)
-+	// These fixtures assert upstream Linux handshake behavior.
-+	if !opts.UseDefaultTCPFingerprint {
-+		fingerprint := tcpip.TCPFingerprintNative
-+		if err := s.SetTransportProtocolOption(tcp.ProtocolNumber, &fingerprint); err != nil {
-+			t.Fatalf("SetTransportProtocolOption(TCPFingerprintProfile): %s", err)
-+		}
-+	}
- 
- 	const sendBufferSize = 1 << 20 // 1 MiB
- 	const recvBufferSize = 1 << 20 // 1 MiB
 diff --git a/pkg/tcpip/transport/tcp/test/e2e/fingerprint_test.go b/pkg/tcpip/transport/tcp/test/e2e/fingerprint_test.go
 new file mode 100644
-index 0000000..fb0045b
+index 0000000..998aa70
 --- /dev/null
 +++ b/pkg/tcpip/transport/tcp/test/e2e/fingerprint_test.go
-@@ -0,0 +1,259 @@
+@@ -0,0 +1,267 @@
 +// Copyright 2026 The gVisor Authors.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -505,7 +1320,7 @@ index 0000000..fb0045b
 +		kinds  string
 +	}{
 +		{"windows", tcpip.TCPFingerprintWindows, 64240, 8, "2-1-3-1-1-4"},
-+		{"macos", tcpip.TCPFingerprintMacOS, 65535, 6, "2-1-3-1-1-8-4-0-0"},
++		{"macos", tcpip.TCPFingerprintMacOS, 65535, 6, "2-1-3-1-1-8-4-0"},
 +		{"linux", tcpip.TCPFingerprintLinux, 65535, 9, "2-4-8-1-3"},
 +	} {
 +		for _, v6 := range []bool{false, true} {
@@ -518,10 +1333,10 @@ index 0000000..fb0045b
 +							c := context.NewWithOpts(t, context.Options{EnableV4: true, EnableV6: true, MTU: mtu, Clock: clock, UseDefaultTCPFingerprint: true})
 +							defer c.Cleanup()
 +							var enabled tcpip.TCPFingerprintProfile
-+							if err := c.Stack().TransportProtocolOption(tcp.ProtocolNumber, &enabled); err != nil || enabled != tcpip.TCPFingerprintWindows {
++							if err := c.Stack().TransportProtocolOption(tcp.ProtocolNumber, &enabled); err != nil || enabled != tcpip.TCPFingerprintNative {
 +								t.Fatalf("default profile = %v, %v", enabled, err)
 +							}
-+							if profile.option != tcpip.TCPFingerprintWindows {
++							{
 +								if err := c.Stack().SetTransportProtocolOption(tcp.ProtocolNumber, &profile.option); err != nil {
 +									t.Fatal(err)
 +								}
@@ -559,7 +1374,11 @@ index 0000000..fb0045b
 +									clear(actualOpts[8:16])
 +								}
 +							}
-+							if syn.Flags() != header.TCPFlagSyn || syn.WindowSize() != profile.window || !bytes.Equal(actualOpts, wantOpts) {
++							wantFlags := header.TCPFlagSyn
++							if profile.option != tcpip.TCPFingerprintLinux {
++								wantFlags |= header.TCPFlagEce | header.TCPFlagCwr
++							}
++							if syn.Flags() != wantFlags || syn.WindowSize() != profile.window || !bytes.Equal(actualOpts, wantOpts) {
 +								t.Fatalf("SYN flags=%v window=%d options=%x, want SYN/%d/%x", syn.Flags(), syn.WindowSize(), syn.Options(), profile.window, wantOpts)
 +							}
 +							t.Logf("JA4T=%d_%s_%d_%d", profile.window, profile.kinds, mss, profile.scale)
@@ -571,7 +1390,7 @@ index 0000000..fb0045b
 +							}
 +							clock.Advance(tcp.InitialRTO)
 +							retry := header.TCP(read()[ipLen:])
-+							if retry.SequenceNumber() != syn.SequenceNumber() || retry.WindowSize() != syn.WindowSize() || !bytes.Equal(retry.Options(), syn.Options()) {
++							if retry.Flags() != header.TCPFlagSyn || retry.SequenceNumber() != syn.SequenceNumber() || retry.WindowSize() != syn.WindowSize() || !bytes.Equal(retry.Options(), syn.Options()) {
 +								t.Fatalf("retransmitted SYN changed: %x", []byte(retry))
 +							}
 +							opts := make([]byte, 40)
@@ -640,6 +1459,10 @@ index 0000000..fb0045b
 +func TestWindowsFingerprintSmallBufferAndSACKDisabled(t *testing.T) {
 +	c := context.NewWithOpts(t, context.Options{EnableV4: true, MTU: 1500, UseDefaultTCPFingerprint: true})
 +	defer c.Cleanup()
++	profile := tcpip.TCPFingerprintWindows
++	if err := c.Stack().SetTransportProtocolOption(tcp.ProtocolNumber, &profile); err != nil {
++		t.Fatal(err)
++	}
 +	disabled := tcpip.TCPSACKEnabled(false)
 +	if err := c.Stack().SetTransportProtocolOption(tcp.ProtocolNumber, &disabled); err != nil {
 +		t.Fatal(err)
@@ -702,33 +1525,31 @@ index 0000000..fb0045b
 +		})
 +	}
 +}
-diff --git a/BUILD b/BUILD
-index 027e878..88578c4 100644
---- a/BUILD
-+++ b/BUILD
-@@ -219,3 +219,25 @@ exports_files([
-     "go.sum",
-     "go.mod",
- ])
+diff --git a/pkg/tcpip/transport/tcp/testing/context/context.go b/pkg/tcpip/transport/tcp/testing/context/context.go
+index 007f9ba..19d7ae2 100644
+--- a/pkg/tcpip/transport/tcp/testing/context/context.go
++++ b/pkg/tcpip/transport/tcp/testing/context/context.go
+@@ -118,6 +118,9 @@ type Headers struct {
+ 
+ // Options contains options for creating a new test context.
+ type Options struct {
++	// UseDefaultTCPFingerprint retains the fork default for profile tests.
++	UseDefaultTCPFingerprint bool
 +
-+# Generated Go sources for embedding this custom netstack in Go programs.
-+go_path(
-+    name = "netstack_gopath",
-+    mode = "archive",
-+    deps = [
-+        "//pkg/tcpip/adapters/gonet",
-+        "//pkg/tcpip/faketime",
-+        "//pkg/tcpip/link/channel",
-+        "//pkg/tcpip/link/ethernet",
-+        "//pkg/tcpip/link/fdbased",
-+        "//pkg/tcpip/link/loopback",
-+        "//pkg/tcpip/link/sniffer",
-+        "//pkg/tcpip/link/tun",
-+        "//pkg/tcpip/network/arp",
-+        "//pkg/tcpip/network/ipv4",
-+        "//pkg/tcpip/network/ipv6",
-+        "//pkg/tcpip/transport/icmp",
-+        "//pkg/tcpip/transport/tcp",
-+        "//pkg/tcpip/transport/udp",
-+    ],
-+)
+ 	// EnableV4 indicates whether IPv4 should be enabled.
+ 	EnableV4 bool
+ 
+@@ -215,6 +218,13 @@ func NewWithOpts(t *testing.T, opts Options) *Context {
+ 		stackOpts.NetworkProtocols = append(stackOpts.NetworkProtocols, ipv6.NewProtocol)
+ 	}
+ 	s := stack.New(stackOpts)
++	// These fixtures assert upstream Linux handshake behavior.
++	if !opts.UseDefaultTCPFingerprint {
++		fingerprint := tcpip.TCPFingerprintNative
++		if err := s.SetTransportProtocolOption(tcp.ProtocolNumber, &fingerprint); err != nil {
++			t.Fatalf("SetTransportProtocolOption(TCPFingerprintProfile): %s", err)
++		}
++	}
+ 
+ 	const sendBufferSize = 1 << 20 // 1 MiB
+ 	const recvBufferSize = 1 << 20 // 1 MiB

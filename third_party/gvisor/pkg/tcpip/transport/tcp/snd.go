@@ -633,6 +633,11 @@ func (s *sender) retransmitTimerExpired() tcpip.Error {
 
 	s.state = tcpip.RTORecovery
 	s.cc.HandleRTOExpired()
+	if s.ep.ecn.enabled {
+		s.ep.ecn.reduced = true
+		s.ep.ecn.recoveryEnd = s.SndNxt
+		s.ep.ecn.pendingCWR = true
+	}
 
 	// Mark the next segment to be sent as the first unacknowledged one and
 	// start sending again. Set the number of outstanding packets to 0 so
@@ -1309,7 +1314,7 @@ func (s *sender) detectLoss(seg *segment) (fastRetransmit bool) {
 		s.DupAckCount = 0
 		return false
 	}
-	s.cc.HandleLossDetected()
+	s.reduceOnLoss()
 	s.enterRecovery()
 	return true
 }
@@ -1595,6 +1600,7 @@ func (s *sender) handleRcvdSegment(rcvdSeg *segment) {
 	}
 
 	ack := rcvdSeg.ackNumber
+	s.handleECNEcho(rcvdSeg)
 	fastRetransmit := false
 	// Do not leave fast recovery, if the ACK is out of range.
 	if s.FastRecovery.Active {
@@ -1729,7 +1735,9 @@ func (s *sender) handleRcvdSegment(rcvdSeg *segment) {
 		// If we are not in fast recovery then update the congestion
 		// window based on the number of acknowledged packets.
 		if !s.FastRecovery.Active {
-			s.cc.Update(originalOutstanding-s.Outstanding, bestRTT, rcvdSeg.rcvdTime)
+			if !s.ep.ecn.reduced || s.ep.ecn.recoveryEnd.LessThan(s.SndUna) {
+				s.cc.Update(originalOutstanding-s.Outstanding, bestRTT, rcvdSeg.rcvdTime)
+			}
 			if s.FastRecovery.Last.LessThan(s.SndUna) {
 				s.state = tcpip.Open
 				// Update RACK when we are exiting fast or RTO
@@ -1779,7 +1787,7 @@ func (s *sender) handleRcvdSegment(rcvdSeg *segment) {
 			// If any segment is marked as lost by
 			// RACK, enter recovery and retransmit
 			// the lost segments.
-			s.cc.HandleLossDetected()
+			s.reduceOnLoss()
 			s.enterRecovery()
 			fastRetransmit = true
 		}

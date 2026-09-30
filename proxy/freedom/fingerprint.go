@@ -21,10 +21,21 @@ type fingerprintDialer interface {
 }
 
 // RequiresTCPFingerprintCapture lets core plan instance-local capture without importing freedom.
-func (c *Config) RequiresTCPFingerprintCapture() bool { return c.TcpFingerprint == "auto" }
+func (c *Config) RequiresTCPFingerprintCapture() bool {
+	return c.TcpFingerprint == "auto" || c.TcpEcn == "auto"
+}
 
 // ValidateTCPFingerprint validates both JSON-built and protobuf configurations.
 func ValidateTCPFingerprint(c *Config) error {
+	if c.TcpEcn != "" && c.TcpFingerprint == "" {
+		return fmt.Errorf("tcpECN requires tcpFingerprint")
+	}
+	switch c.TcpEcn {
+	case "", "template", "auto", "none", "classic", "accecn":
+	default:
+		return fmt.Errorf("tcpECN must be template, auto, none, classic or accecn")
+	}
+
 	if c.TcpFingerprintFallback != "" {
 		if c.TcpFingerprint != "auto" {
 			return fmt.Errorf("tcpFingerprintFallback requires tcpFingerprint auto")
@@ -212,10 +223,32 @@ func fingerprintTemplate(profile string) string {
 	case "windows":
 		return "64240_2-1-3-1-1-4_*_8"
 	case "macos":
-		return "65535_2-1-3-1-1-8-4-0-0_*_6"
+		return "65535_2-1-3-1-1-8-4-0_*_6"
 	case "linux":
 		return "65535_2-4-8-1-3_*_9"
 	default:
 		return "unknown"
 	}
+}
+
+// ECN is selected independently of the OS category and stored on the endpoint,
+// never by mutating shared stack options during a concurrent dial.
+func selectFingerprintECN(ctx context.Context, configured, profile string) (mode, source string, fallback bool) {
+	template := "none"
+	if profile == "windows" || profile == "macos" {
+		template = "classic"
+	}
+	if configured == "" || configured == "template" {
+		return template, "template", false
+	}
+	if configured != "auto" {
+		return configured, "fixed", false
+	}
+	if in := session.InboundFromContext(ctx); in != nil {
+		switch in.TCPECN {
+		case "none", "classic", "accecn":
+			return in.TCPECN, in.TCPECNSource, false
+		}
+	}
+	return template, "template", true
 }

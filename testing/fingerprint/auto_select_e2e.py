@@ -20,7 +20,7 @@ MULTI_HOP = os.environ.get('XRAY_FP_MULTI_HOP') == '1'
 OUT = ROOT/'testing/fingerprint/artifacts'/('multi-hop' if MULTI_HOP else 'auto-selection')
 OUT.mkdir(parents=True, exist_ok=True)
 PROFILES = ['windows','macos','linux']
-EXPECTED = ['64240_2-1-3-1-1-4_1460_8','65535_2-1-3-1-1-8-4-0-0_1460_6','65535_2-4-8-1-3_1460_9']
+EXPECTED = ['64240_2-1-3-1-1-4_1460_8','65535_2-1-3-1-1-8-4-0_1460_6','65535_2-4-8-1-3_1460_9']
 RUNTIMES = Path(os.environ.get('XRAY_FP_RUNSC_DIR', str(ROOT.parent/'dist')))
 UUID = '8e023ca4-6e4d-47ab-9f38-233a67d95671'
 PREFIX=f'xfpsel-{os.getpid()}'
@@ -60,7 +60,10 @@ def fingerprints(path):
   win=int.from_bytes(tcp[14:16],'big');end=(tcp[12]>>4)*4;p=20;kinds=[];mss=ws=None
   while p<end:
    kind=tcp[p];kinds.append(str(kind))
-   if kind in [0,1]:p+=1;continue
+   if kind==0:
+    assert not any(tcp[p+1:end]), "nonzero EOL padding"
+    break
+   if kind==1:p+=1;continue
    length=tcp[p+1]
    if kind==2:mss=int.from_bytes(tcp[p+2:p+4],'big')
    if kind==3:ws=tcp[p+2]

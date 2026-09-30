@@ -52,7 +52,10 @@ def check_packets(path):
   options=[];mss=ws=None;p=20
   while p<(tcp[12]>>4)*4:
    k=tcp[p];options.append(str(k))
-   if k in [0,1]:p+=1;continue
+   if k==0:
+    assert not any(tcp[p+1:(tcp[12]>>4)*4]), "nonzero EOL padding"
+    break
+   if k==1:p+=1;continue
    n=tcp[p+1];assert n>=2
    if k==2:mss=int.from_bytes(tcp[p+2:p+4],'big')
    if k==3:ws=tcp[p+2]
@@ -94,7 +97,7 @@ print('ready',flush=True);signal.pause()
  assert 'net.ipv6.conf.all.forwarding=1' in (OUT/'xrui.log').read_text()
  assert output(['cat','/proc/sys/net/ipv6/conf/all/forwarding']).strip()==b'0'
  cmd(['sysctl','-qw','net.ipv6.conf.all.forwarding=1'],LAB)
- expected=['64240_2-1-3-1-1-4_1440_8','65535_2-1-3-1-1-8-4-0-0_1440_6','65535_2-4-8-1-3_1440_9','65535_2-4-8-1-3_1440_9']
+ expected=['64240_2-1-3-1-1-4_1440_8','65535_2-1-3-1-1-8-4-0_1440_6','65535_2-4-8-1-3_1440_9','65535_2-4-8-1-3_1440_9']
  report={}
  for i,name in enumerate(profiles):
   path=OUT/(name+'.pcap');cap=launch(['tcpdump','--immediate-mode','-i','eth0','-U','-w',str(path),'ip6 and tcp'],'capture-'+name,PEER)

@@ -109,9 +109,9 @@ func (v *Listener) keepAccepting() {
 			continue
 		}
 
-		profile := ""
+		profile, ecn := "", ""
 		if v.captureFingerprint {
-			profile = internet.ReadTCPFingerprint(conn)
+			profile, ecn = internet.ReadTCPFingerprintMetadata(conn)
 		}
 		go func() {
 			if v.tlsConfig != nil {
@@ -126,7 +126,7 @@ func (v *Listener) keepAccepting() {
 				conn = v.authConfig.Server(conn)
 			}
 			if v.captureFingerprint {
-				v.addConn(&internet.FingerprintedConn{Conn: stat.Connection(conn), Profile: profile})
+				v.addConn(&internet.FingerprintedConn{Conn: stat.Connection(conn), Profile: profile, ECN: ecn})
 			} else {
 				v.addConn(stat.Connection(conn))
 			}

@@ -22,7 +22,7 @@ OUT = ROOT/'testing/fingerprint/artifacts/automatic'
 OUT.mkdir(parents=True, exist_ok=True)
 BINARY = Path(sys.argv[1]).resolve()
 LAB, PEER = f'xfplab-{os.getpid()}', f'xfppeer-{os.getpid()}'
-EXPECTED = ['64240_2-1-3-1-1-4_1460_8', '65535_2-1-3-1-1-8-4-0-0_1460_6', '65535_2-4-8-1-3_1460_9']
+EXPECTED = ['64240_2-1-3-1-1-4_1460_8', '65535_2-1-3-1-1-8-4-0_1460_6', '65535_2-4-8-1-3_1460_9']
 PROFILES = ['windows', 'macos', 'linux']
 processes, logs, namespaces = [], [], []
 
@@ -114,7 +114,10 @@ def capture_check(path):
         while cursor < len(options):
             kind = options[cursor]
             kinds.append(kind)
-            if kind in (0,1): cursor += 1; continue
+            if kind == 0:
+                assert not any(options[cursor+1:]), "nonzero EOL padding"
+                break
+            if kind == 1: cursor += 1; continue
             length = options[cursor+1]
             assert length >= 2 and cursor+length <= len(options)
             if kind == 2: mss = struct.unpack_from('!H',options,cursor+2)[0]

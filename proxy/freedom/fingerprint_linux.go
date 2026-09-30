@@ -31,6 +31,8 @@ import (
 )
 
 type tunFingerprintDialer struct {
+	ecnMode   string
+	profile   string
 	headers   *fingerprintIPHeaders
 	routeMu   sync.Mutex
 	mtu       uint32
@@ -107,7 +109,7 @@ func newFingerprintDialerFamily(c *Config, is6 bool) (fingerprintDialer, error) 
 		TransportProtocols: []stack.TransportProtocolFactory{tcp.NewProtocol, icmp.NewProtocol4, icmp.NewProtocol6},
 	})
 	lifetime, cancel := context.WithCancel(context.Background())
-	d := &tunFingerprintDialer{stack: s, file: file, link: link, ctx: lifetime, cancel: cancel, automatic: automatic, mtu: mtu, headers: newFingerprintIPHeaders(c.TcpFingerprint)}
+	d := &tunFingerprintDialer{ecnMode: c.TcpEcn, profile: c.TcpFingerprint, stack: s, file: file, link: link, ctx: lifetime, cancel: cancel, automatic: automatic, mtu: mtu, headers: newFingerprintIPHeaders(c.TcpFingerprint)}
 	ok := false
 	defer func() {
 		if !ok {
@@ -338,6 +340,12 @@ func (d *tunFingerprintDialer) dialWithMTU(ctx context.Context, address tcpip.Fu
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	mode, source, fallback := selectFingerprintECN(ctx, d.ecnMode, d.profile)
+	option := map[string]tcpip.TCPFingerprintECNOption{"none": tcpip.TCPFingerprintECNNone, "classic": tcpip.TCPFingerprintECNClassic, "accecn": tcpip.TCPFingerprintECNAccurate}[mode]
+	if err := ep.SetSockOpt(&option); err != nil {
+		return nil, fmt.Errorf("fingerprint ECN: %s", err)
+	}
+	xerrors.LogInfo(ctx, "TCP ECN freedom: selected=", mode, " source=", source, " fallback=", fallback, " profile=", d.profile)
 	d.routeMu.Lock()
 	d.stack.SetRouteTable([]tcpip.Route{{Destination: d.subnet, NIC: 1, MTU: mtu}})
 	err = ep.Connect(address)

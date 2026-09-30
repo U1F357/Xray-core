@@ -6,5 +6,5 @@
   "export_target": "//:netstack_gopath",
   "export_platform": "linux/amd64",
   "default_profile": "native",
-  "patch_sha256": "e419e6fa7eeffad05f9a1f61e0717c465143f8852e9f2b22285ed740c2798a4f"
+  "patch_sha256": "7fb271f4fd6fd3ed6012ca0dce09b1677beb58a98500b6eb1e40eb0f262a78e4"
 }

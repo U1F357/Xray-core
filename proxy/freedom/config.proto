@@ -65,6 +65,8 @@ message Config {
   string tcp_fingerprint = 9;
   TCPFingerprintSettings tcp_fingerprint_settings = 10;
   string tcp_fingerprint_fallback = 11;
+  // template (default), auto (ingress metadata), none, classic or accecn.
+  string tcp_ecn = 12;
 }
 
 // Optional manual override. Omit to automatically provision the Linux network.

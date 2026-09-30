@@ -17,7 +17,7 @@ OUT=ROOT/'testing/fingerprint/artifacts/mtu';OUT.mkdir(parents=True,exist_ok=Tru
 LAB=f'xfpmtu-{os.getpid()}a';PEER=f'xfpmtu-{os.getpid()}b'
 processes=[];logs=[];spaces=[];BODY=bytes(range(256))*512
 profiles=['windows','macos','linux','auto']
-templates=[('64240','2-1-3-1-1-4','8'),('65535','2-1-3-1-1-8-4-0-0','6'),('65535','2-4-8-1-3','9'),('65535','2-4-8-1-3','9')]
+templates=[('64240','2-1-3-1-1-4','8'),('65535','2-1-3-1-1-8-4-0','6'),('65535','2-4-8-1-3','9'),('65535','2-4-8-1-3','9')]
 def run(args,ns=LAB,**kwargs):return subprocess.run(['ip','netns','exec',ns]+args,check=True,**kwargs)
 def output(args):return subprocess.check_output(['ip','netns','exec',LAB]+args)
 def launch(args,name,ns=LAB):
@@ -56,7 +56,10 @@ def capture_check(path,limits):
    p=20;kinds=[];mss=ws=None
    while p<(tcp[12]>>4)*4:
     k=tcp[p];kinds.append(str(k))
-    if k in [0,1]:p+=1;continue
+    if k==0:
+     assert not any(tcp[p+1:(tcp[12]>>4)*4]), "nonzero EOL padding"
+     break
+    if k==1:p+=1;continue
     n=tcp[p+1];assert n>=2
     if k==2:mss=int.from_bytes(tcp[p+2:p+4],'big')
     if k==3:ws=tcp[p+2]

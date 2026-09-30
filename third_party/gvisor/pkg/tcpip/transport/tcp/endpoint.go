@@ -561,6 +561,10 @@ type Endpoint struct {
 	// applied while sending packets. Defaults to 0 as on Linux.
 	sendTOS uint8
 
+	// ecn is enabled only by the custom active-open fingerprint profiles.
+	ecn            classicECN
+	fingerprintECN tcpip.TCPFingerprintECNOption
+
 	gso stack.GSO
 
 	stats Stats
@@ -2032,6 +2036,17 @@ func (e *Endpoint) HasNIC(id int32) bool {
 // +checklocksexclude:e.pendingProcessingMu
 func (e *Endpoint) SetSockOpt(opt tcpip.SettableSocketOption) tcpip.Error {
 	switch v := opt.(type) {
+	case *tcpip.TCPFingerprintECNOption:
+		e.LockUser()
+		defer e.UnlockUser()
+		if *v > tcpip.TCPFingerprintECNAccurate {
+			return &tcpip.ErrInvalidOptionValue{}
+		}
+		if e.EndpointState() != StateInitial && e.EndpointState() != StateBound {
+			return &tcpip.ErrInvalidEndpointState{}
+		}
+		e.fingerprintECN = *v
+
 	case *tcpip.KeepaliveIdleOption:
 		e.LockUser()
 		e.keepalive.Lock()

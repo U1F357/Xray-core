@@ -38,7 +38,7 @@
 | `tcpFingerprint` | TCP SYN 指纹 |
 | --- | --- |
 | `windows` | `64240_2-1-3-1-1-4_*_8` |
-| `macos` | `65535_2-1-3-1-1-8-4-0-0_*_6` |
+| `macos` | `65535_2-1-3-1-1-8-4-0_*_6` |
 | `linux` | `65535_2-4-8-1-3_*_9` |
 
 `*` 为 MSS，由链路 MTU 决定；MTU 1500 时 IPv4 为 1460，IPv6 为 1440。
@@ -129,7 +129,7 @@ freedom 每次实际拨号选择的模板，包含 Xray 的会话 ID，便于关
 TCP fingerprint inbound: detected=windows peer=...
 TCP fingerprint freedom: mode=auto detected=windows selected=windows fallback=false template=64240_2-1-3-1-1-4_*_8 dialing=tcp:...
 TCP fingerprint freedom: mode=auto detected=unknown selected=linux fallback=true template=65535_2-4-8-1-3_*_9 dialing=tcp:...
-TCP fingerprint freedom: mode=fixed selected=macos template=65535_2-1-3-1-1-8-4-0-0_*_6 dialing=tcp:...
+TCP fingerprint freedom: mode=fixed selected=macos template=65535_2-1-3-1-1-8-4-0_*_6 dialing=tcp:...
 ```
 
 `unknown` 表示无法识别或无法获取 SYN；`fallback=true` 表示使用备用类别。
@@ -318,3 +318,5 @@ IPv6 自动模式使用独立 ULA /126 和 NAT66，仅首次连接时创建；�
 `client-fingerprint: chrome`，并在节点 `reality-opts` 下添加
 `support-x25519mlkem768: true`。这是上游 REALITY 基线与 mihomo 默认设置的
 兼容性差异，详见[配置与复现说明](docs/reality-mihomo.zh-CN.md)。
+
+ECN/AccECN 固定模式、入口自动识别和 VLESS 传递：见 [TCP ECN 使用说明](docs/tcp-ecn.zh-CN.md)。此扩展从 fp-v0.4.0 起提供。

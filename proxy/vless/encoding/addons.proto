@@ -11,4 +11,6 @@ message Addons {
   bytes Seed = 2;
   // Private experimental extension; not allocated or standardized by upstream.
   bytes tcp_fingerprint = 65001;
+  // Independent extension so older fingerprint-aware peers retain the OS category.
+  bytes tcp_ecn = 65002;
 }

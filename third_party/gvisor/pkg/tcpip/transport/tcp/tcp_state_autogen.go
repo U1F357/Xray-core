@@ -148,6 +148,112 @@ func (c *cubicState) StateLoad(ctx context.Context, stateSourceObject state.Sour
 	stateSourceObject.Load(2, &c.s)
 }
 
+func (c *classicECN) StateTypeName() string {
+	return "pkg/tcpip/transport/tcp.classicECN"
+}
+
+func (c *classicECN) StateFields() []string {
+	return []string{
+		"offered",
+		"enabled",
+		"echo",
+		"pendingCWR",
+		"reduced",
+		"recoveryEnd",
+		"accurateOffered",
+		"accurate",
+		"rxCE",
+		"txACE",
+		"ceSinceACK",
+		"thirdACKPending",
+		"thirdACKCode",
+		"synCESeen",
+		"synCongestion",
+		"peerSYNSeq",
+		"localSYNAck",
+		"feedbackAck",
+		"feedbackSeq",
+		"feedbackTS",
+		"feedbackSeen",
+		"ackOfACK",
+		"disableECT",
+		"synECN",
+		"forceACK",
+		"dsackPending",
+		"dsack",
+		"dsackContaining",
+	}
+}
+
+func (c *classicECN) beforeSave() {}
+
+// +checklocksignore
+func (c *classicECN) StateSave(stateSinkObject state.Sink) {
+	c.beforeSave()
+	stateSinkObject.Save(0, &c.offered)
+	stateSinkObject.Save(1, &c.enabled)
+	stateSinkObject.Save(2, &c.echo)
+	stateSinkObject.Save(3, &c.pendingCWR)
+	stateSinkObject.Save(4, &c.reduced)
+	stateSinkObject.Save(5, &c.recoveryEnd)
+	stateSinkObject.Save(6, &c.accurateOffered)
+	stateSinkObject.Save(7, &c.accurate)
+	stateSinkObject.Save(8, &c.rxCE)
+	stateSinkObject.Save(9, &c.txACE)
+	stateSinkObject.Save(10, &c.ceSinceACK)
+	stateSinkObject.Save(11, &c.thirdACKPending)
+	stateSinkObject.Save(12, &c.thirdACKCode)
+	stateSinkObject.Save(13, &c.synCESeen)
+	stateSinkObject.Save(14, &c.synCongestion)
+	stateSinkObject.Save(15, &c.peerSYNSeq)
+	stateSinkObject.Save(16, &c.localSYNAck)
+	stateSinkObject.Save(17, &c.feedbackAck)
+	stateSinkObject.Save(18, &c.feedbackSeq)
+	stateSinkObject.Save(19, &c.feedbackTS)
+	stateSinkObject.Save(20, &c.feedbackSeen)
+	stateSinkObject.Save(21, &c.ackOfACK)
+	stateSinkObject.Save(22, &c.disableECT)
+	stateSinkObject.Save(23, &c.synECN)
+	stateSinkObject.Save(24, &c.forceACK)
+	stateSinkObject.Save(25, &c.dsackPending)
+	stateSinkObject.Save(26, &c.dsack)
+	stateSinkObject.Save(27, &c.dsackContaining)
+}
+
+func (c *classicECN) afterLoad(context.Context) {}
+
+// +checklocksignore
+func (c *classicECN) StateLoad(ctx context.Context, stateSourceObject state.Source) {
+	stateSourceObject.Load(0, &c.offered)
+	stateSourceObject.Load(1, &c.enabled)
+	stateSourceObject.Load(2, &c.echo)
+	stateSourceObject.Load(3, &c.pendingCWR)
+	stateSourceObject.Load(4, &c.reduced)
+	stateSourceObject.Load(5, &c.recoveryEnd)
+	stateSourceObject.Load(6, &c.accurateOffered)
+	stateSourceObject.Load(7, &c.accurate)
+	stateSourceObject.Load(8, &c.rxCE)
+	stateSourceObject.Load(9, &c.txACE)
+	stateSourceObject.Load(10, &c.ceSinceACK)
+	stateSourceObject.Load(11, &c.thirdACKPending)
+	stateSourceObject.Load(12, &c.thirdACKCode)
+	stateSourceObject.Load(13, &c.synCESeen)
+	stateSourceObject.Load(14, &c.synCongestion)
+	stateSourceObject.Load(15, &c.peerSYNSeq)
+	stateSourceObject.Load(16, &c.localSYNAck)
+	stateSourceObject.Load(17, &c.feedbackAck)
+	stateSourceObject.Load(18, &c.feedbackSeq)
+	stateSourceObject.Load(19, &c.feedbackTS)
+	stateSourceObject.Load(20, &c.feedbackSeen)
+	stateSourceObject.Load(21, &c.ackOfACK)
+	stateSourceObject.Load(22, &c.disableECT)
+	stateSourceObject.Load(23, &c.synECN)
+	stateSourceObject.Load(24, &c.forceACK)
+	stateSourceObject.Load(25, &c.dsackPending)
+	stateSourceObject.Load(26, &c.dsack)
+	stateSourceObject.Load(27, &c.dsackContaining)
+}
+
 func (q *epQueue) StateTypeName() string {
 	return "pkg/tcpip/transport/tcp.epQueue"
 }
@@ -485,6 +591,8 @@ func (e *Endpoint) StateFields() []string {
 		"connectingAddress",
 		"amss",
 		"sendTOS",
+		"ecn",
+		"fingerprintECN",
 		"gso",
 		"stats",
 		"tcpLingerTimeout",
@@ -551,17 +659,19 @@ func (e *Endpoint) StateSave(stateSinkObject state.Sink) {
 	stateSinkObject.Save(44, &e.connectingAddress)
 	stateSinkObject.Save(45, &e.amss)
 	stateSinkObject.Save(46, &e.sendTOS)
-	stateSinkObject.Save(47, &e.gso)
-	stateSinkObject.Save(48, &e.stats)
-	stateSinkObject.Save(49, &e.tcpLingerTimeout)
-	stateSinkObject.Save(50, &e.closed)
-	stateSinkObject.Save(51, &e.txHash)
-	stateSinkObject.Save(52, &e.owner)
-	stateSinkObject.Save(53, &e.ops)
-	stateSinkObject.Save(54, &e.lastOutOfWindowAckTime)
-	stateSinkObject.Save(55, &e.pmtud)
-	stateSinkObject.Save(56, &e.alsoBindToV4)
-	stateSinkObject.Save(57, &e.terminateAtRestore)
+	stateSinkObject.Save(47, &e.ecn)
+	stateSinkObject.Save(48, &e.fingerprintECN)
+	stateSinkObject.Save(49, &e.gso)
+	stateSinkObject.Save(50, &e.stats)
+	stateSinkObject.Save(51, &e.tcpLingerTimeout)
+	stateSinkObject.Save(52, &e.closed)
+	stateSinkObject.Save(53, &e.txHash)
+	stateSinkObject.Save(54, &e.owner)
+	stateSinkObject.Save(55, &e.ops)
+	stateSinkObject.Save(56, &e.lastOutOfWindowAckTime)
+	stateSinkObject.Save(57, &e.pmtud)
+	stateSinkObject.Save(58, &e.alsoBindToV4)
+	stateSinkObject.Save(59, &e.terminateAtRestore)
 }
 
 // +checklocksignore
@@ -612,17 +722,19 @@ func (e *Endpoint) StateLoad(ctx context.Context, stateSourceObject state.Source
 	stateSourceObject.Load(44, &e.connectingAddress)
 	stateSourceObject.Load(45, &e.amss)
 	stateSourceObject.Load(46, &e.sendTOS)
-	stateSourceObject.Load(47, &e.gso)
-	stateSourceObject.Load(48, &e.stats)
-	stateSourceObject.Load(49, &e.tcpLingerTimeout)
-	stateSourceObject.Load(50, &e.closed)
-	stateSourceObject.Load(51, &e.txHash)
-	stateSourceObject.Load(52, &e.owner)
-	stateSourceObject.Load(53, &e.ops)
-	stateSourceObject.Load(54, &e.lastOutOfWindowAckTime)
-	stateSourceObject.Load(55, &e.pmtud)
-	stateSourceObject.Load(56, &e.alsoBindToV4)
-	stateSourceObject.Load(57, &e.terminateAtRestore)
+	stateSourceObject.Load(47, &e.ecn)
+	stateSourceObject.Load(48, &e.fingerprintECN)
+	stateSourceObject.Load(49, &e.gso)
+	stateSourceObject.Load(50, &e.stats)
+	stateSourceObject.Load(51, &e.tcpLingerTimeout)
+	stateSourceObject.Load(52, &e.closed)
+	stateSourceObject.Load(53, &e.txHash)
+	stateSourceObject.Load(54, &e.owner)
+	stateSourceObject.Load(55, &e.ops)
+	stateSourceObject.Load(56, &e.lastOutOfWindowAckTime)
+	stateSourceObject.Load(57, &e.pmtud)
+	stateSourceObject.Load(58, &e.alsoBindToV4)
+	stateSourceObject.Load(59, &e.terminateAtRestore)
 	stateSourceObject.LoadValue(12, new(EndpointState), func(y any) { e.loadState(ctx, y.(EndpointState)) })
 	stateSourceObject.AfterLoad(func() { e.afterLoad(ctx) })
 }
@@ -1892,6 +2004,7 @@ func init() {
 	state.Register((*acceptQueue)(nil))
 	state.Register((*handshake)(nil))
 	state.Register((*cubicState)(nil))
+	state.Register((*classicECN)(nil))
 	state.Register((*epQueue)(nil))
 	state.Register((*processor)(nil))
 	state.Register((*dispatcher)(nil))

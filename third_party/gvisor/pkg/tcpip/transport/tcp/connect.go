@@ -343,8 +343,14 @@ func (h *handshake) synSentState(s *segment) tcpip.Error {
 	// If this is a SYN ACK response, we only need to acknowledge the SYN
 	// and the handshake is completed.
 	if s.flags.Contains(header.TCPFlagAck) {
+		h.ep.ecn.negotiate(s.flags, s.pkt.TransportHeader().Slice()[12]&1 != 0)
+		h.ep.ecn.acceptSynACK(s)
 		h.state = handshakeCompleted
 		h.transitionToStateEstablishedLocked(s)
+		if h.ep.ecn.synCongestion {
+			h.ep.snd.reduceOnLoss()
+			h.ep.snd.SndCwnd = min(h.ep.snd.SndCwnd, h.ep.snd.Ssthresh)
+		}
 
 		h.ep.sendEmptyRaw(header.TCPFlagAck, h.iss+1, h.ackNum, h.rcvWnd>>h.effectiveRcvWndScale())
 		return nil
@@ -353,6 +359,7 @@ func (h *handshake) synSentState(s *segment) tcpip.Error {
 	// A SYN segment was received, but no ACK in it. We acknowledge the SYN
 	// but resend our own SYN and wait for it to be acknowledged in the
 	// SYN-RCVD state.
+	h.ep.ecn = classicECN{} // Simultaneous open retains upstream non-ECN behavior.
 	h.state = handshakeSynRcvd
 	ttl := calculateTTL(h.ep.route, h.ep.ipv4TTL, h.ep.ipv6HopLimit)
 	amss := h.ep.amss
@@ -584,6 +591,16 @@ func (h *handshake) start() {
 	if h.active {
 		var profile tcpip.TCPFingerprintProfile
 		if err := h.ep.stack.TransportProtocolOption(ProtocolNumber, &profile); err == nil {
+			mode := h.ep.fingerprintECN
+			if mode == tcpip.TCPFingerprintECNTemplate {
+				switch profile {
+				case tcpip.TCPFingerprintWindows, tcpip.TCPFingerprintMacOS:
+					mode = tcpip.TCPFingerprintECNClassic
+				default:
+					mode = tcpip.TCPFingerprintECNNone
+				}
+			}
+			h.ep.ecn = classicECN{offered: mode == tcpip.TCPFingerprintECNClassic || mode == tcpip.TCPFingerprintECNAccurate, accurateOffered: mode == tcpip.TCPFingerprintECNAccurate}
 			h.fingerprintProfile = profile
 			window := 0
 			switch profile {
@@ -670,6 +687,9 @@ func (h *handshake) retransmitHandlerLocked() tcpip.Error {
 	// the connection with another ACK or data (as ACKs are never
 	// retransmitted on their own).
 	if h.active || !h.acked || h.deferAccept != 0 && e.stack.Clock().NowMonotonic().Sub(h.startTime) > h.deferAccept {
+		// Retry without ECN if the first SYN may have encountered an ECN black hole.
+		e.ecn.offered = false
+		e.ecn.accurateOffered = false
 		e.sendSynTCP(e.route, tcpFields{
 			id:                 e.TransportEndpointInfo.ID,
 			ttl:                calculateTTL(e.route, e.ipv4TTL, e.ipv6HopLimit),
@@ -909,6 +929,8 @@ func makeSynOptions(opts header.TCPSynOptions) []byte {
 // tcpFields is a struct to carry different parameters required by the
 // send*TCP variant functions below.
 type tcpFields struct {
+	ae                 bool
+	accurate           bool
 	id                 stack.TransportEndpointID
 	ttl                uint8
 	tos                uint8
@@ -924,6 +946,19 @@ type tcpFields struct {
 }
 
 func (e *Endpoint) sendSynTCP(r *stack.Route, tf tcpFields, opts header.TCPSynOptions) tcpip.Error {
+	if e.ecn.offered && tf.flags == header.TCPFlagSyn {
+		tf.flags |= header.TCPFlagEce | header.TCPFlagCwr
+		tf.ae = e.ecn.accurateOffered
+		if e.ecn.accurateOffered && tf.fingerprintProfile == tcpip.TCPFingerprintMacOS {
+			tf.tos = (tf.tos &^ 3) | 1
+		} else if tf.fingerprintProfile == tcpip.TCPFingerprintWindows {
+			// Match the supplied Windows SYN; macOS uses Not-ECT.
+			tf.tos = (tf.tos &^ 3) | 2
+		}
+	}
+	if e.ecn.offered {
+		e.ecn.synECN = tf.tos & 3
+	}
 	switch tf.fingerprintProfile {
 	case tcpip.TCPFingerprintWindows:
 		tf.opts = makeWindowsSynOptions(opts)
@@ -952,9 +987,23 @@ func (e *Endpoint) sendSynTCP(r *stack.Route, tf tcpFields, opts header.TCPSynOp
 // This method takes ownership of pkt.
 func (e *Endpoint) sendTCP(r *stack.Route, tf tcpFields, pkt *stack.PacketBuffer, gso stack.GSO) tcpip.Error {
 	tf.txHash = e.txHash
+	newData := e.snd != nil && !e.snd.zeroWindowProbing && pkt.Data().Size() > 0 && !tf.seq.LessThan(e.snd.SndNxt)
+	cwr := e.ecn.prepare(&tf, newData)
 	if err := sendTCP(r, tf, pkt, gso, e.owner); err != nil {
 		e.stats.SendErrors.SegmentSendToNetworkFailed.Increment()
 		return err
+	}
+	if cwr {
+		e.ecn.pendingCWR = false
+	}
+	if e.ecn.accurate && tf.flags.Contains(header.TCPFlagAck) {
+		if !e.ecn.thirdACKPending && !e.ecn.ackOfACK {
+			e.ecn.dsackPending = false
+		}
+		e.ecn.thirdACKPending = false
+		e.ecn.ackOfACK = false
+		e.ecn.ceSinceACK = 0
+		e.ecn.forceACK = false
 	}
 	e.stats.SegmentsSent.Increment()
 	return nil
@@ -973,6 +1022,9 @@ func buildTCPHdr(r *stack.Route, tf tcpFields, pkt *stack.PacketBuffer, gso stac
 		Flags:      tf.flags,
 		WindowSize: uint16(tf.rcvWnd),
 	})
+	if tf.ae {
+		tcp[12] |= 1
+	}
 	copy(tcp[header.TCPMinimumSize:], tf.opts)
 
 	xsum := r.PseudoHeaderChecksum(ProtocolNumber, uint16(pkt.Size()))
@@ -1028,6 +1080,10 @@ func sendTCPBatch(r *stack.Route, tf tcpFields, pkt *stack.PacketBuffer, gso sta
 
 		buildTCPHdr(r, tf, pkt, gso)
 		tf.seq = tf.seq.Add(seqnum.Size(packetSize))
+		// CWR belongs only to the first segment of a GSO batch.
+		if !tf.ae && !tf.accurate {
+			tf.flags &^= header.TCPFlagCwr
+		}
 		pkt.GSOOptions = gso
 		if err := r.WritePacket(stack.NetworkHeaderParams{
 			Protocol:              ProtocolNumber,
@@ -1088,6 +1144,29 @@ func sendTCP(r *stack.Route, tf tcpFields, pkt *stack.PacketBuffer, gso stack.GS
 //
 // +checklocks:e.mu
 func (e *Endpoint) makeOptions(sackBlocks []header.SACKBlock) []byte {
+	if e.ecn.accurate && (e.ecn.thirdACKPending || e.ecn.ackOfACK) {
+		sackBlocks = nil
+	} else if e.ecn.accurate && e.ecn.dsackPending && e.SACKPermitted {
+		blocks := make([]header.SACKBlock, 0, len(sackBlocks)+2)
+		blocks = append(blocks, e.ecn.dsack)
+		containing := e.ecn.dsackContaining
+		if containing.Start != containing.End {
+			for _, block := range sackBlocks {
+				if !e.ecn.dsack.Start.LessThan(block.Start) && !block.End.LessThan(e.ecn.dsack.End) {
+					containing = block
+					break
+				}
+			}
+			blocks = append(blocks, containing)
+		}
+		for _, block := range sackBlocks {
+			if block != containing {
+				blocks = append(blocks, block)
+			}
+		}
+		sackBlocks = blocks
+	}
+
 	options := getOptions()
 	offset := 0
 
@@ -1427,6 +1506,19 @@ func (e *Endpoint) handleSegmentLocked(s *segment) (cont bool, err tcpip.Error) 
 			return false, err
 		}
 	} else if s.flags.Contains(header.TCPFlagSyn) {
+		if e.ecn.accurate && s.flags.Contains(header.TCPFlagAck) &&
+			s.sequenceNumber == e.ecn.peerSYNSeq && s.ackNumber == e.ecn.localSYNAck {
+			code := uint8(s.flags >> 6)
+			if s.pkt.TransportHeader().Slice()[12]&1 != 0 {
+				code |= 4
+			}
+			if code >= 2 && code <= 6 {
+				e.ecn.acceptSynACK(s)
+				ack, wnd := e.rcv.getSendParams()
+				e.sendEmptyRaw(header.TCPFlagAck, e.snd.SndNxt, ack, wnd)
+				return true, nil
+			}
+		}
 		// See: https://tools.ietf.org/html/rfc5961#section-4.1
 		//   1) If the SYN bit is set, irrespective of the sequence number, TCP
 		//    MUST send an ACK (also referred to as challenge ACK) to the remote
@@ -1481,6 +1573,10 @@ func (e *Endpoint) handleSegmentLocked(s *segment) (cont bool, err tcpip.Error) 
 		}
 
 		e.snd.handleRcvdSegment(s)
+		if e.ecn.forceACK {
+			e.ecn.forceACK = false
+			e.snd.sendAck()
+		}
 	}
 
 	return true, nil

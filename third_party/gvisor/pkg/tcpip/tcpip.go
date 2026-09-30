@@ -2929,3 +2929,16 @@ func DeleteDanglingEndpoint(e Endpoint) {
 // AsyncLoading is the global barrier for asynchronous endpoint loading
 // activities.
 var AsyncLoading sync.WaitGroup
+
+// TCPFingerprintECNOption selects ECN for one active TCP endpoint. It must be
+// set before Connect; zero leaves the platform preset in control.
+type TCPFingerprintECNOption uint8
+
+const (
+	TCPFingerprintECNTemplate TCPFingerprintECNOption = iota
+	TCPFingerprintECNNone
+	TCPFingerprintECNClassic
+	TCPFingerprintECNAccurate
+)
+
+func (*TCPFingerprintECNOption) isSettableSocketOption() {}

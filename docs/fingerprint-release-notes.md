@@ -1,18 +1,19 @@
 本 fork 的全部自定义修改、测试、文档和发布流程完全由 AI（OpenAI Codex）实现。上游 Xray-core、gVisor、基础镜像及地理数据由各自作者开发；本项目不是 XTLS 官方发行版。
 
-## fp-v0.3.0
+## fp-v0.4.0
 
-- 新增 IPv6 指纹出口：三模板及 auto、NAT66、IPv6 字面地址与 ForceIPv6 解析。IPv6 自动联网要求当前网络空间已开启全局 IPv6 转发；程序不会代为开启。
-- 新增按目标路由/出口接口 MTU 和 advmss 自动限制 MSS 与发包大小，每条新连接重新读取；不等于主动探测全路径 MTU，隐藏瓶颈及 ICMP 黑洞仍有局限。
-- 扩展固定平台预设：Windows 初始 TTL/Hop Limit 128，macOS/Linux 64；平台源端口范围；Windows/Linux IPv4 ID 序列与现代 XNU 原子包 ID=0；Linux/macOS 每流 IPv6 Flow Label。正常转发仍减跳数。
-- 增加 TCP Flags、DF、保留位、头长度、timestamp 时钟、IP ID/flow label、校验和及不同 MTU 的抓包验证。未新增动态特征探测，也未声称模拟完整操作系统的 ECN/拥塞恢复/异常探测行为。
-- 补充 mihomo REALITY 兼容说明及本地 nginx 测试：使用 `client-fingerprint: chrome`，在 `reality-opts` 中设置 `support-x25519mlkem768: true`。对应较新上游 REALITY 的握手要求；同基线原版也有此要求。
-- 保留 xrui 文件/进程名、三种 JA4T、入口分类、可信 VLESS 多跳类别传递和 INFO 日志。节点间类别转发仍不支持出站 Mux。
+- 新增经典 ECN 和 AccECN 核心实现：协商与回退、CE 反馈、ACE 计数器回绕及拥塞窗口响应；不只是设置 SYN 标志。
+- freedom 新增 `tcpECN: template|auto|none|classic|accecn`，逐连接选择，与平台类别独立。省略时 Windows/macOS 默认请求经典 ECN，Linux 默认不请求 ECN；需要旧版行为可显式设置 `none`。
+- 入口识别 SYN 请求的 ECN 模式，沿用现有可信用户策略，通过独立 VLESS 私有字段跨节点传递。出站 `tcpFingerprintForward: true` 同时转发平台及 ECN；转发仍需关闭 Mux。原版可忽略扩展，但不保留元数据。
+- 完善 Windows/macOS/iPhone 样本对应的 SYN 标志和 IP ECN 标记；修正 Apple JA4T 展示，将 EOL 后的零填充排除在选项列表之外。MSS 仍随有效 MTU 调整。
+- 增加 IPv4/IPv6 三平台 × 三 ECN 模式的三层 VLESS 并发抓包测试，以及协商、回退、拥塞反馈、重传和 D-SACK 测试。
+
+AccECN 使用 ACE 核心反馈，不包含可选字节计数 TCP 选项或 L4S 拥塞控制。入口识别代表收到的 SYN 声明，不证明客户端完整实现能力；出口独立协商。不保证完整复制某一操作系统的 TCP 行为。
 
 ## 使用与镜像
 
-现有 `tcpFingerprint: windows|macos|linux|auto` 配置直接应用扩展模板，无需增加字段。
-Linux amd64 镜像：`ghcr.io/u1f357/xrui:fp-v0.3.0`，同时更新 `latest`。
+自动跟随入口需在 freedom 中同时配置 `tcpFingerprint: "auto"` 和 `tcpECN: "auto"`。入口/中转策略及固定模式见 `docs/tcp-ecn.zh-CN.md`。
+Linux amd64 镜像：`ghcr.io/u1f357/xrui:fp-v0.4.0`，同时更新 `latest`。
 配置目录：`/usr/local/etc/xrui/`；镜像及普通压缩包内置固定版本、经校验的 geoip/geosite。
 指纹出口仍需 NET_ADMIN、TUN 和转发能力；IPv6 还需实际可用的 IPv6 网络。
 

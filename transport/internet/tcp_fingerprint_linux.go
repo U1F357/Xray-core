@@ -17,13 +17,18 @@ func enableSavedSYN(fd uintptr) {
 }
 
 func ReadTCPFingerprint(conn net.Conn) string {
+	profile, _ := ReadTCPFingerprintMetadata(conn)
+	return profile
+}
+
+func ReadTCPFingerprintMetadata(conn net.Conn) (string, string) {
 	sc, ok := conn.(syscall.Conn)
 	if !ok {
-		return ""
+		return "", ""
 	}
 	raw, err := sc.SyscallConn()
 	if err != nil {
-		return ""
+		return "", ""
 	}
 	var packet [4096]byte
 	size := uint32(len(packet))
@@ -32,7 +37,7 @@ func ReadTCPFingerprint(conn net.Conn) string {
 		_, _, errno = syscall.Syscall6(unix.SYS_GETSOCKOPT, fd, unix.IPPROTO_TCP, unix.TCP_SAVED_SYN, uintptr(unsafe.Pointer(&packet[0])), uintptr(unsafe.Pointer(&size)), 0)
 	})
 	if err != nil || errno != 0 || size > uint32(len(packet)) {
-		return ""
+		return "", ""
 	}
-	return ClassifyTCPSYN(packet[:size])
+	return ClassifyTCPSYN(packet[:size]), ClassifyTCPSYNECN(packet[:size])
 }

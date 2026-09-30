@@ -459,6 +459,37 @@ func (r *receiver) handleRcvdSegment(s *segment) (drop bool, err tcpip.Error) {
 	segLen := seqnum.Size(s.payloadSize())
 	segSeq := s.sequenceNumber
 
+	// AccECN with SACK also implements receiver D-SACK (RFC 9768 3.1.1).
+	// Report duplicate bytes below RCV.NXT, or a duplicate range already
+	// represented in the out-of-order SACK scoreboard.
+	if r.ep.ecn.accurate && r.ep.SACKPermitted && segLen > 0 {
+		end := segSeq.Add(segLen)
+		if segSeq.LessThan(r.RcvNxt) {
+			if r.RcvNxt.LessThan(end) {
+				end = r.RcvNxt
+			}
+			r.ep.ecn.dsack = header.SACKBlock{Start: segSeq, End: end}
+			r.ep.ecn.dsackContaining = header.SACKBlock{}
+			r.ep.ecn.dsackPending = true
+		} else {
+			for _, block := range r.ep.sack.Blocks[:r.ep.sack.NumBlocks] {
+				start, duplicateEnd := segSeq, end
+				if start.LessThan(block.Start) {
+					start = block.Start
+				}
+				if block.End.LessThan(duplicateEnd) {
+					duplicateEnd = block.End
+				}
+				if start.LessThan(duplicateEnd) {
+					r.ep.ecn.dsack = header.SACKBlock{Start: start, End: duplicateEnd}
+					r.ep.ecn.dsackContaining = block
+					r.ep.ecn.dsackPending = true
+					break
+				}
+			}
+		}
+	}
+
 	// If the sequence number range is outside the acceptable range, just
 	// send an ACK and stop further processing of the segment.
 	// This is according to RFC 793, page 68.
@@ -473,6 +504,9 @@ func (r *receiver) handleRcvdSegment(s *segment) (drop bool, err tcpip.Error) {
 			return drop, err
 		}
 	}
+
+	// Update ECN feedback only after validating the receive sequence window.
+	r.ep.receiveECN(s)
 
 	// Store the time of the last ack. Use the segment's ingress time rather than
 	// the current clock so a segment delayed inside the stack before processing

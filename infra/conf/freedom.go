@@ -27,6 +27,7 @@ type FreedomConfig struct {
 	ProxyProtocol          uint32                          `json:"proxyProtocol"`
 	IPsBlocked             *StringList                     `json:"ipsBlocked"`
 	FinalRules             []*FreedomFinalRuleConfig       `json:"finalRules"`
+	TCPECN                 string                          `json:"tcpECN"`
 	TCPFingerprintFallback string                          `json:"tcpFingerprintFallback"`
 	TCPFingerprint         string                          `json:"tcpFingerprint"`
 	TCPFingerprintSettings *freedom.TCPFingerprintSettings `json:"tcpFingerprintSettings"`
@@ -62,6 +63,7 @@ func (c *FreedomConfig) Build() (proto.Message, error) {
 	}
 
 	config := new(freedom.Config)
+	config.TcpEcn = strings.ToLower(c.TCPECN)
 	config.TcpFingerprint = strings.ToLower(c.TCPFingerprint)
 	config.TcpFingerprintFallback = strings.ToLower(c.TCPFingerprintFallback)
 	config.TcpFingerprintSettings = c.TCPFingerprintSettings

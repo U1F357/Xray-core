@@ -9,20 +9,23 @@
 
 | 特征 | windows | macos | linux |
 | --- | --- | --- | --- |
-| SYN JA4T | `64240_2-1-3-1-1-4_*_8` | `65535_2-1-3-1-1-8-4-0-0_*_6` | `65535_2-4-8-1-3_*_9` |
+| SYN JA4T | `64240_2-1-3-1-1-4_*_8` | `65535_2-1-3-1-1-8-4-0_*_6` | `65535_2-4-8-1-3_*_9` |
 | 初始 IPv4 TTL / IPv6 Hop Limit | 128 | 64 | 64 |
 | 主动 TCP IPv4 DF | 1 | 1 | 1 |
 | 原子 IPv4 包 IP ID | 随机初值、每个栈递增 | 0（当前 XNU RFC 6864 模式） | 每条流随机初值、递增 |
 | IPv4 Options / IPv6 Extension Headers | 普通 TCP 包不添加 | 普通 TCP 包不添加 | 普通 TCP 包不添加 |
 | IPv6 Flow Label | 保留原栈的 0，未模拟 Windows 各版本差异 | 非零、每条流固定 | 非零、每条流固定 |
-| 默认 ToS / Traffic Class | 0 | 0 | 0 |
-| SYN Flags | SYN (`0x02`)，不主动协商 ECN | SYN (`0x02`)，选择非 ECN 变体 | SYN (`0x02`)，不主动协商 ECN |
+| 默认 SYN ToS / Traffic Class | 2（ECT(0)） | 0（Not-ECT） | 0 |
+| 默认 SYN Flags | SYN+ECE+CWR (`0xc2`) | SYN+ECE+CWR (`0xc2`) | SYN (`0x02`) |
 | SYN ACK number / urgent pointer / reserved bits | 0 | 0 | 0 |
 | TCP timestamp | 不主动提供 | 提供，1 kHz | 提供，1 kHz |
 | 初始 TSecr | 无 timestamp | 0 | 0 |
 | 源端口范围（NAT 前） | 49152–65535 | 49152–65535 | 32768–60999 |
 | SYN TCP 头长度 | 32 字节 | 44 字节 | 40 字节 |
 | SYN payload | 无 | 无 | 无 |
+
+Apple 选项在第一个 EOL（kind 0）处结束；其后的零字节是对齐填充，不能计为第二个选项。
+早期文档和部分抓包测试报告中的 `…-4-0-0` 是解析错误，实际发包仍为 EOL 加一字节零填充，TCP 头保持 44 字节。
 
 MSS 仍按有效 MTU 和 IPv4/IPv6 头长度计算，不写死 1460。前三项 JA4T 模板
 保留用户指定值，因此不能声称所有值都来自某个具体 OS 版本的默认配置。
@@ -50,7 +53,7 @@ NAT 可能重写源端口，中间网络也可能改写 DSCP/TTL；跨 TCP 终�
 | DF / IP Options / IPv6 扩展头 | 保留正确的已有行为并抓包断言 | 不干扰分片、ICMP 或扩展头处理 |
 | IP ID | 新增上述策略及校验和重算 | 不模仿所有 Windows 版本；Mac 选用当前 XNU 行为 |
 | IPv6 Flow Label | 新增 Linux/macOS 每流标签 | Windows 更细差异暂不模拟 |
-| ToS / DSCP / ECN | 默认 0，不主动 ECN | 应用、网络策略会改变此项，并非独有 OS 标志 |
+| ToS / DSCP / ECN | DSCP 默认 0；ECN 可按模板、固定值或入口元数据选择 | 见 [ECN 配置与边界](tcp-ecn.zh-CN.md) |
 | Window / MSS / WS / Option 顺序 | 保留 JA4T 预设和 MTU 适配 | 不动态复制入口窗口 |
 | Flags / NOP / EOL / padding / header length | 保留已有模板及 TCP 状态机，增加抓包验证 | 不能把所有包都强行写成 SYN 或固定 flags |
 | Timestamp | Windows 不提供；另外两类 1 kHz；验证初始 echo=0 | 保留 gVisor timestamp offset/回显/PAWS，不复制 OS 的随机偏移算法 |
@@ -58,13 +61,16 @@ NAT 可能重写源端口，中间网络也可能改写 DSCP/TTL；跨 TCP 终�
 | ISN / Sequence Number | 保留安全的 gVisor 生成与状态管理 | 不为外观改成可预测序号，不复刻平台 ISN 算法 |
 | SYN/SYN-ACK 重传次数及 RTO | 暂不模拟平台差异 | 当前 freedom 是主动客户端；超时/重传仍由原有栈管理 |
 | ACK / SACK / 拥塞恢复 | 暂不模拟平台差异 | 更改会影响可靠性和吞吐，不能仅改头部字段 |
-| 异常 Flags / 非法 Options / ECN probe | 暂不模拟平台差异 | 涉及完整 TCP 状态机及拥塞反馈，不能仅添加 ECE/CWR |
+| 异常 Flags / 非法 Options / 主动探测 | 不模拟完整平台响应 | ECN 主动建连的协商、反馈和回退独立实现；不是只改 SYN 标志 |
 | Closed Port RST / ICMP / UDP→ICMP | 暂不模拟平台差异 | 公开入站通常由宿主 Linux 处理；freedom 模板不覆盖整台主机 |
 
 现代 macOS 的 ECN/AccECN/L4S 会受版本、网络接口、系统配置和启发式策略影响。
-当前模板明确选择非 ECN 变体，不宣称与所有现代 macOS 默认 SYN Flags 相同。
-仅添加 ECE/CWR 而不实现 CE 标记反馈、拥塞窗口调整及回退会制造协议不一致，
-因此没有采用这种做法。旧 p0f 数据库中的 macOS 常见 `id+`，而当前 XNU 默认
+fp-v0.4.0 新增 `tcpECN`，Windows/macOS 模板默认请求经典 ECN，也可选择
+`accecn` 或 `auto`；此前 fp-v0.3.0 发布版使用非 ECN 变体。Apple AccECN SYN
+可匹配提供的 iPhone 样本，经典 ECN 可匹配提供的 macOS 样本，详情见
+[ECN 配置与实现边界](tcp-ecn.zh-CN.md)。AccECN 使用 ACE 核心反馈，并不宣称
+实现了 Apple 的 L4S 拥塞控制或完整操作系统行为。
+旧 p0f 数据库中的 macOS 常见 `id+`，而当前 XNU 默认
 原子包 ID=0；不能为了命中旧数据库就声称它是所有现代 Mac 的行为。
 
 ## 实现位置与隔离
@@ -72,7 +78,7 @@ NAT 可能重写源端口，中间网络也可能改写 DSCP/TTL；跨 TCP 终�
 TTL、Hop Limit、端口范围通过现有 gVisor stack API 配置。
 `proxy/freedom/fingerprint_headers_linux.go` 在自定义 freedom 栈的出包边界处理
 IP ID 和 Flow Label，复用已有 TUN write pump；不引入第二套 TCP 实现。
-IPv4 只重算 IP 头校验和；TCP 报文、序号、选项及校验和均不改动。
+IPv4 只重算 IP 头校验和；此 IP 头适配器不改动 TCP 报文；ECN/AccECN 的 TCP 标志与反馈由 gVisor TCP 状态机处理，并在构造报文时计算校验和。
 IPv6 Flow Label 不在 TCP 伪头内，不需要更改 TCP 校验和。
 
 该逻辑不作用于普通 freedom、WireGuard、原有 TUN 入站或宿主系统的全局参数。

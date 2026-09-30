@@ -439,8 +439,10 @@ type Config struct {
 	TcpFingerprint         string                  `protobuf:"bytes,9,opt,name=tcp_fingerprint,json=tcpFingerprint,proto3" json:"tcp_fingerprint,omitempty"`
 	TcpFingerprintSettings *TCPFingerprintSettings `protobuf:"bytes,10,opt,name=tcp_fingerprint_settings,json=tcpFingerprintSettings,proto3" json:"tcp_fingerprint_settings,omitempty"`
 	TcpFingerprintFallback string                  `protobuf:"bytes,11,opt,name=tcp_fingerprint_fallback,json=tcpFingerprintFallback,proto3" json:"tcp_fingerprint_fallback,omitempty"`
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	// template (default), auto (ingress metadata), none, classic or accecn.
+	TcpEcn        string `protobuf:"bytes,12,opt,name=tcp_ecn,json=tcpEcn,proto3" json:"tcp_ecn,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Config) Reset() {
@@ -543,6 +545,13 @@ func (x *Config) GetTcpFingerprintFallback() string {
 	return ""
 }
 
+func (x *Config) GetTcpEcn() string {
+	if x != nil {
+		return x.TcpEcn
+	}
+	return ""
+}
+
 // Optional manual override. Omit to automatically provision the Linux network.
 // When specified, use this exclusive, preconfigured TUN and routed/NAT exit.
 type TCPFingerprintSettings struct {
@@ -634,7 +643,7 @@ const file_proxy_freedom_config_proto_rawDesc = "" +
 	"\tport_list\x18\x03 \x01(\v2\x19.xray.common.net.PortListR\bportList\x12+\n" +
 	"\x02ip\x18\x04 \x03(\v2\x1b.xray.common.geodata.IPRuleR\x02ip\x12:\n" +
 	"\vblock_delay\x18\x05 \x01(\v2\x19.xray.proxy.freedom.RangeR\n" +
-	"blockDelay\"\xf8\x04\n" +
+	"blockDelay\"\x91\x05\n" +
 	"\x06Config\x12P\n" +
 	"\x0fdomain_strategy\x18\x01 \x01(\x0e2'.xray.transport.internet.DomainStrategyR\x0edomainStrategy\x12Z\n" +
 	"\x14destination_override\x18\x03 \x01(\v2'.xray.proxy.freedom.DestinationOverrideR\x13destinationOverride\x12\x1d\n" +
@@ -648,7 +657,8 @@ const file_proxy_freedom_config_proto_rawDesc = "" +
 	"\x0ftcp_fingerprint\x18\t \x01(\tR\x0etcpFingerprint\x12d\n" +
 	"\x18tcp_fingerprint_settings\x18\n" +
 	" \x01(\v2*.xray.proxy.freedom.TCPFingerprintSettingsR\x16tcpFingerprintSettings\x128\n" +
-	"\x18tcp_fingerprint_fallback\x18\v \x01(\tR\x16tcpFingerprintFallback\"D\n" +
+	"\x18tcp_fingerprint_fallback\x18\v \x01(\tR\x16tcpFingerprintFallback\x12\x17\n" +
+	"\atcp_ecn\x18\f \x01(\tR\x06tcpEcn\"D\n" +
 	"\x16TCPFingerprintSettings\x12\x10\n" +
 	"\x03tun\x18\x01 \x01(\tR\x03tun\x12\x18\n" +
 	"\aaddress\x18\x02 \x01(\tR\aaddress*\"\n" +

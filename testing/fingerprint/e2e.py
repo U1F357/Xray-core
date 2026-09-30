@@ -26,7 +26,7 @@ OUT.mkdir(exist_ok=True)
 BINARY = Path(sys.argv[1]).resolve()
 PROFILES = {
     'windows': '64240_2-1-3-1-1-4_1460_8',
-    'macos': '65535_2-1-3-1-1-8-4-0-0_1460_6',
+    'macos': '65535_2-1-3-1-1-8-4-0_1460_6',
     'linux': '65535_2-4-8-1-3_1460_9',
 }
 BODY = bytes(range(256)) * 1024
@@ -110,7 +110,10 @@ def read_fingerprints(path):
         while p < len(options):
             kind = options[p]
             kinds.append(kind)
-            if kind in (0, 1):
+            if kind == 0:
+                assert not any(options[p+1:]), "nonzero EOL padding"
+                break
+            if kind == 1:
                 p += 1
                 continue
             length = options[p+1]

@@ -34,13 +34,15 @@ for path in sorted(OUT.glob('*.pcap')):
   sourceport=int.from_bytes(tcp[:2],'big');low,high=(32768,60999) if profile=='linux' else (49152,65535)
   assert low<=sourceport<=high,(profile,sourceport)
   assert ttl==(127 if profile=='windows' else 63),(profile,ttl)
-  assert tcp[12]&15==0 and tcp[13]&0xe0==0,'reserved/ECN/URG bits unexpectedly set'
+  assert tcp[12]&15==0 and tcp[13]&0x20==0,'reserved/AE/URG bits unexpectedly set'
+  if profile=='linux':assert tcp[13]&0xc0==0,'Linux unexpectedly negotiated ECN'
   assert tcp[18:20]==b'\x00\x00','unexpected urgent pointer'
   flags[(profile,tcp[13])]+=1
   key=(version,src,dst,sourceport,port)
   flow=flows.setdefault(key,{'ids':[],'labels':set(),'timestamps':[]})
   if version==4:
-   assert h==20 and p[1]==0
+   assert h==20
+   traffic_class=p[1]
    assert int.from_bytes(p[6:8],'big')==0x4000
    checksum=sum(struct.unpack('!10H',p[:20]));checksum=(checksum&65535)+(checksum>>16);checksum=(checksum&65535)+(checksum>>16)
    assert checksum==65535,'IPv4 checksum'
@@ -48,20 +50,27 @@ for path in sorted(OUT.glob('*.pcap')):
    if profile=='windows':windows_ids.append(ident)
    if profile=='macos':assert ident==0
   else:
-   assert (int.from_bytes(p[:4],'big')>>20)&255==0,'traffic class'
+   traffic_class=(int.from_bytes(p[:4],'big')>>20)&255
    label=int.from_bytes(p[:4],'big')&0xfffff
    if profile!='windows':assert label!=0
    flow['labels'].add(label)
+  assert traffic_class&0xfc==0,'unexpected DSCP'
+  assert traffic_class&3 in ((0,2) if profile!='linux' else (0,)),'unexpected ECN codepoint'
   end=(tcp[12]>>4)*4;i=20;ts=None
+  if total==h+end and not tcp[13]&2:assert traffic_class==0,'pure control packet is ECT'
   while i<end:
    kind=tcp[i]
-   if kind in (0,1):i+=1;continue
+   if kind==0:
+    assert not any(tcp[i+1:end]), "nonzero EOL padding"
+    break
+   if kind==1:i+=1;continue
    n=tcp[i+1];assert n>=2
    if kind==8:ts=struct.unpack('!II',tcp[i+2:i+10]);flow['timestamps'].append((sec+usec/1e6,ts[0]))
    i+=n
   if profile=='windows':assert ts is None,'Windows unexpectedly negotiated timestamps'
   if tcp[13]&2:
-   assert tcp[13]==2 and tcp[8:12]==b'\0'*4 and total==h+end,'malformed SYN flags/ACK/payload'
+   assert tcp[13]==(2 if profile=='linux' else 0xc2) and tcp[8:12]==b'\0'*4 and total==h+end,'malformed SYN flags/ACK/payload'
+   assert traffic_class==(2 if profile=='windows' else 0),'SYN ECN marking'
    if profile!='windows':assert ts is not None and ts[1]==0,'initial timestamp echo'
    syns[(version,profile)]+=1
  for key,f in flows.items():

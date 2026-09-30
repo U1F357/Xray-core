@@ -91,3 +91,105 @@ func TestFingerprintVLESSTrustPolicy(t *testing.T) {
 		}
 	}
 }
+
+func TestFingerprintECNWireAndTrust(t *testing.T) {
+	for _, mode := range []string{"", "none", "classic", "accecn"} {
+		encoded := EncodeTCPECN(mode)
+		if got, ok := DecodeTCPECN(encoded); !ok || got != mode {
+			t.Fatal("ECN roundtrip", got, ok)
+		}
+		// Encode the ECN-only extension, and let both upstream and older custom
+		// schemas parse it. Neither may change flow or payload boundaries.
+		for _, fields := range []int{2, 3} {
+			a := &Addons{TcpFingerprint: EncodeTCPFingerprint("macos"), TcpEcn: encoded}
+			b := buf.New()
+			if err := EncodeHeaderAddons(b, a); err != nil {
+				t.Fatal(err)
+			}
+			fd := protodesc.ToFileDescriptorProto(File_proxy_vless_encoding_addons_proto)
+			fd.MessageType[0].Field = fd.MessageType[0].Field[:fields]
+			fd.Name = proto.String("legacy-ecn.proto")
+			file, err := protodesc.NewFile(fd, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			legacy := dynamicpb.NewMessage(file.Messages().Get(0))
+			if err := proto.Unmarshal(b.Bytes()[1:], legacy); err != nil {
+				t.Fatal(err)
+			}
+			if fields == 3 {
+				got, ok := DecodeTCPFingerprint(legacy.Get(legacy.Descriptor().Fields().ByNumber(65001)).Bytes())
+				if !ok || got != "macos" {
+					t.Fatal("old core lost OS category")
+				}
+			}
+			b.Release()
+		}
+		for _, source := range []string{"syn", "vless"} {
+			for _, trusted := range []bool{false, true} {
+				in := &session.Inbound{TCPFingerprint: "windows", TCPFingerprintSource: "syn", TCPECN: "classic", TCPECNSource: "syn"}
+				ctx := session.ContextWithInbound(context.Background(), in)
+				ctx = session.ContextWithTCPFingerprintPolicy(ctx, &session.TCPFingerprintPolicy{Source: source, TrustedUsers: []string{"relay"}})
+				user := "untrusted"
+				if trusted {
+					user = "relay"
+				}
+				ApplyTCPFingerprint(ctx, &Addons{TcpEcn: encoded}, user)
+				want, origin := "classic", "syn"
+				if source == "vless" {
+					want, origin = "", "unknown"
+					if trusted {
+						want, origin = mode, "vless"
+					}
+				}
+				if in.TCPECN != want || in.TCPECNSource != origin {
+					t.Fatalf("source=%s trusted=%v mode=%q: %q/%s", source, trusted, mode, in.TCPECN, in.TCPECNSource)
+				}
+			}
+		}
+	}
+	for _, bad := range [][]byte{nil, []byte("XECN\x02\x01"), []byte("XECN\x01\xff"), []byte("XECN\x01\x03\x00")} {
+		if _, ok := DecodeTCPECN(bad); ok {
+			t.Fatal("accepted malformed ECN extension")
+		}
+	}
+}
+
+func TestFingerprintECNMissingPolicy(t *testing.T) {
+	cases := []struct {
+		name                  string
+		data                  []byte
+		missing, want, source string
+	}{
+		{"missing", nil, "", "", "unknown"},
+		{"missing fallback", nil, "syn", "classic", "syn"},
+		{"invalid fallback", []byte("XECN\x02\x03"), "syn", "classic", "syn"},
+		{"explicit unknown", EncodeTCPECN(""), "syn", "", "vless"},
+		{"explicit none", EncodeTCPECN("none"), "syn", "none", "vless"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			in := &session.Inbound{TCPFingerprint: "linux", TCPFingerprintSource: "syn", TCPECN: "classic", TCPECNSource: "syn"}
+			ctx := session.ContextWithInbound(context.Background(), in)
+			ctx = session.ContextWithTCPFingerprintPolicy(ctx, &session.TCPFingerprintPolicy{Source: "vless", TrustedUsers: []string{"relay"}, OnMissing: c.missing})
+			ApplyTCPFingerprint(ctx, &Addons{TcpFingerprint: EncodeTCPFingerprint("macos"), TcpEcn: c.data}, "relay")
+			if in.TCPECN != c.want || in.TCPECNSource != c.source || in.TCPFingerprint != "macos" {
+				t.Fatalf("got %+v", in)
+			}
+		})
+	}
+	b := buf.New()
+	defer b.Release()
+	if err := EncodeHeaderAddons(b, &Addons{TcpEcn: EncodeTCPECN("accecn")}); err != nil {
+		t.Fatal(err)
+	}
+	scratch := buf.New()
+	defer scratch.Release()
+	a, err := DecodeHeaderAddons(scratch, bytes.NewReader(b.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode, ok := DecodeTCPECN(a.TcpEcn); !ok || mode != "accecn" || len(a.TcpFingerprint) != 0 {
+		t.Fatal("ECN-only metadata lost")
+	}
+}

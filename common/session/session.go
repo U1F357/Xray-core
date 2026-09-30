@@ -39,6 +39,8 @@ type Inbound struct {
 	// Forwarded values are accepted only from explicitly trusted authenticated users.
 	TCPFingerprintSource string
 	TCPFingerprint       string
+	TCPECN               string // Offered ECN mode, subject to the same inbound trust policy.
+	TCPECNSource         string
 	// Source address of the inbound connection.
 	Source net.Destination
 	// Local address of the inbound connection.

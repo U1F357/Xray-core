@@ -15,7 +15,7 @@ import (
 )
 
 func EncodeHeaderAddons(buffer *buf.Buffer, addons *Addons) error {
-	if addons.Flow == vless.XRV || len(addons.TcpFingerprint) != 0 {
+	if addons.Flow == vless.XRV || len(addons.TcpFingerprint) != 0 || len(addons.TcpEcn) != 0 {
 		bytes, err := proto.Marshal(addons)
 		if err != nil {
 			return errors.New("failed to marshal addons protobuf value").Base(err)
