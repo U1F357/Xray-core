@@ -70,3 +70,7 @@ ehthumbs.db
 
 # Custom release build output
 /dist/
+
+# Python verification tools
+__pycache__/
+*.py[cod]
