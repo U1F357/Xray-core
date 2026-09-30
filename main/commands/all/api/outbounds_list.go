@@ -10,7 +10,7 @@ var cmdListOutbounds = &base.Command{
 	UsageLine:   "{{.Exec}} api lso [--server=127.0.0.1:8080]",
 	Short:       "List outbounds",
 	Long: `
-List outbounds in Xray.
+List outbounds in xrui.
 
 Arguments:
 

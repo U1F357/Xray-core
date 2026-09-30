@@ -13,7 +13,7 @@ var cmdRemoveInbounds = &base.Command{
 	UsageLine:   "{{.Exec}} api rmi [--server=127.0.0.1:8080] <json_file|tag> [json_file] [tag]...",
 	Short:       "Remove inbounds",
 	Long: `
-Remove inbounds from Xray.
+Remove inbounds from xrui.
 
 Arguments:
 

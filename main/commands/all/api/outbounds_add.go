@@ -14,7 +14,7 @@ var cmdAddOutbounds = &base.Command{
 	UsageLine:   "{{.Exec}} api ado [--server=127.0.0.1:8080] <c1.json> [c2.json]...",
 	Short:       "Add outbounds",
 	Long: `
-Add outbounds to Xray.
+Add outbounds to xrui.
 
 Arguments:
 

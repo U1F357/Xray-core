@@ -13,7 +13,7 @@ var cmdRemoveOutbounds = &base.Command{
 	UsageLine:   "{{.Exec}} api rmo [--server=127.0.0.1:8080] <json_file|tag> [json_file] [tag]...",
 	Short:       "Remove outbounds",
 	Long: `
-Remove outbounds from Xray.
+Remove outbounds from xrui.
 
 Arguments:
 

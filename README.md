@@ -1,4 +1,4 @@
-# Xray-core：TCP 指纹可选 / 自动匹配版本
+# xrui：基于 Xray-core 的 TCP 指纹可选 / 自动匹配版本
 
 **本 fork 的全部自定义修改、gVisor 集成、测试、文档和 GitHub Actions 工作流，完全由 AI（OpenAI Codex）实现。**
 **All custom changes in this fork were implemented entirely by AI (OpenAI Codex).**
@@ -33,18 +33,25 @@
 `*` 是根据出站链路确定的 MSS。MTU 1500 时实测 MSS 为 1460。
 这些名称代表指纹模板，不是对真实操作系统身份的保证。
 
+## 程序名称
+
+可执行文件名为 `xrui`，以该文件启动时进程名也是 `xrui`；版本输出、启动日志和命令行帮助使用同一名称。
+配置文件名、JSON 字段、环境变量、内部 Go 模块/API 名称保持与 Xray 兼容。
+容器配置目录改为 `/usr/local/etc/xrui/`。
+源码仓库仍为 `U1F357/Xray-core`。旧版本下载包中的程序名不变；新构建输出 `dist/xrui`。
+
 ## 使用
 
 当前发行包仅支持 **Linux amd64、IPv4 出站**。需要 root、可用的 `/dev/net/tun`、
 网络管理权限，以及内核 nftables/NAT/conntrack 支持。普通宿主 Linux 可直接运行；
 受限制容器或 VPS 可能需要宿主授予相应能力。运行时不调用 ip/nft/iptables 命令。
 
-下载 `xray-fingerprint-linux-amd64.tar.gz` 和 `SHA256SUMS`，核验并解压：
+下载 `xrui-linux-amd64.tar.gz` 和 `SHA256SUMS`，核验并解压：
 
 ```bash
 sha256sum --ignore-missing -c SHA256SUMS
-tar -xzf xray-fingerprint-linux-amd64.tar.gz
-sudo ./xray-fingerprint run -config example-auto.json
+tar -xzf xrui-linux-amd64.tar.gz
+sudo ./xrui run -config example-auto.json
 ```
 
 示例监听 `127.0.0.1:1080` SOCKS；部署代理服务器时，请在自己的入站配置中配置认证，
@@ -95,6 +102,12 @@ TCP fingerprint freedom: mode=auto detected=unknown selected=linux fallback=true
   正常退出和仅主进程被杀均有清理机制；主进程及管理子进程全被强杀时，部分规则可能
   留到下次启动按记录恢复。防火墙服务重载等环境变化需配合重启。
 - 已验证真实 WireGuard 隧道 TCP/UDP 和原有 TUN 入站；尚未做吞吐基准测试。完整边界见[详细说明](README.tcp-fingerprint.zh-CN.md)。
+
+## Docker 镜像
+
+提供 `ghcr.io/u1f357/xrui:fp-v0.2.1` 和 `latest`（Linux amd64），内置经校验的 geoip/geosite 数据。
+配置目录为 `/usr/local/etc/xrui/`；Release 同时附带可通过 `docker load` 导入的镜像包。
+启用指纹出口需要额外的 TUN、NET_ADMIN 和容器内转发设置，详见 [Docker 使用说明](docs/docker.zh-CN.md)。
 
 ## 多跳传递
 

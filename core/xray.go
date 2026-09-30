@@ -412,7 +412,7 @@ func (s *Instance) Start() error {
 		}
 	}
 
-	errors.LogWarning(s.ctx, "Xray ", Version(), " started")
+	errors.LogWarning(s.ctx, "xrui ", Version(), " started")
 
 	return nil
 }

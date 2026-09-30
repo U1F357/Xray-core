@@ -1,0 +1,10 @@
+{
+  "repository": "Loyalsoldier/v2ray-rules-dat",
+  "commit": "ef3bc79159c1d99438ace0c515f8b3f5e8093d42",
+  "sha256": {
+    "geoip.dat": "3cf2236c19063c1c80803368cca5ff589c5033129fdf9ba154230c689b81fc2a",
+    "geosite.dat": "51211fde21696bbde05d1102f47f586261e98987a3cae23f7dd1cd742c62c2d2"
+  },
+  "source_commit": "5c20d2eb5a65b171816949010ede67a27326cbe6",
+  "license_sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+}

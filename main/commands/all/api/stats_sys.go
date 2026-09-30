@@ -10,7 +10,7 @@ var cmdSysStats = &base.Command{
 	UsageLine:   "{{.Exec}} api statssys [--server=127.0.0.1:8080]",
 	Short:       "Retrieve system statistics",
 	Long: `
-Retrieve system statistics from Xray.
+Retrieve system statistics from xrui.
 
 Arguments:
 

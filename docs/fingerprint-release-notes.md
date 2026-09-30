@@ -1,25 +1,18 @@
-本 fork 的全部自定义修改、gVisor 集成、测试、文档和发布工作流完全由 AI（OpenAI Codex）实现。原始 Xray-core 和 gVisor 由各自上游作者开发；这不是 XTLS 官方发行版。
+本 fork 的全部自定义修改、测试、文档和发布流程完全由 AI（OpenAI Codex）实现。上游 Xray-core、gVisor、基础镜像及地理数据由各自作者开发；本项目不是 XTLS 官方发行版。
 
-本次新增 VLESS 多跳 TCP 指纹类别传递：入口观测 SYN，各可信中转通过 VLESS Addons 传递 windows / macos / linux / unknown，末端 freedom auto 选择对应栈。功能默认关闭，按入站认证账户 email 显式信任。未知类别不会被中转自身指纹覆盖。
+本次发布：
 
-- 原版 Xray 可以处理新增字段的流量，但不会继续传递类别。已验证固定上游版本的双向普通 VLESS、TLS、Vision over TLS 互通；REALITY 握手尚未完成端到端验证。
-- 节点间启用转发的出站必须关闭 Mux；用户到入口的 Mux 可继承物理连接类别。
-- INFO 日志包含入口识别、VLESS 收发类别及 freedom 选择结果。
-- 统一共享 gVisor 库默认 native，按实例开启自定义指纹；修正依赖版本并提供完整可复现导出脚本及源文件校验。
-- SYN 采集和 MPTCP 默认调整仅作用于需要采集的监听器，普通配置保留原行为。
-- 增加真实 WireGuard TCP/UDP、原有 TUN 入站、三节点传播、信任策略和互通测试。
+- 程序文件、进程名、版本显示和帮助改为 xrui；保留配置文件名、JSON 字段、环境变量和内部 API。
+- 新增 Linux amd64 容器镜像 `ghcr.io/u1f357/xrui:fp-v0.2.1` 和 `latest`。配置目录为 `/usr/local/etc/xrui/`。
+- 镜像与普通压缩包均内置固定版本并经 SHA256 校验的 geoip.dat / geosite.dat，以及来源和许可证。
+- Docker 只读 /proc/sys 下，转发已由容器 sysctl 开启时不再重复写入；指纹出口仍需 NET_ADMIN、TUN 和容器转发设置。
+- 保留三种 TCP 指纹模板、自动选择、可信 VLESS 多跳类别传递与 INFO 日志。节点间转发仍不支持出站 Mux。
 
-最终指纹出口仅支持 Linux amd64、IPv4，需要 root、TUN、nftables/NAT/conntrack 和网络管理权限。中转类别本身不需要 TUN。外层代理若重建 TCP，最终线上指纹仍可能被改写。
+附件：
 
-下载压缩包及 SHA256SUMS，校验后解压：
+- `xrui`：静态可执行文件。
+- `xrui-linux-amd64.tar.gz`：程序、geodata、配置示例和文档。
+- `xrui-docker-linux-amd64.tar.gz`：`docker load -i` 可直接导入的镜像。
+- `IMAGE_DIGEST` 与 `SHA256SUMS`：镜像 digest 和下载校验。
 
-```bash
-sha256sum --ignore-missing -c SHA256SUMS
-tar -xzf xray-fingerprint-linux-amd64.tar.gz
-sudo ./xray-fingerprint run -config example-auto.json
-```
-
-`example-auto.json` 为本机 SOCKS 自动模式，`example.json` 为固定 Windows 模板。
-`example-chain/` 提供本地三节点示例，部署时应替换认证及链路配置。
-完整参数与限制见 README.tcp-fingerprint.zh-CN.md 和 docs/vless-fingerprint.zh-CN.md。
-GitHub Actions 编译静态二进制，并执行相关测试、race 检测、VLESS/TLS/Vision 集成和隔离网络抓包验证。
+Docker 配置及权限详见仓库及压缩包中的 `docs/docker.zh-CN.md`。发行前执行代码测试、race 检查、SYN 抓包及真实容器自动指纹出口测试。

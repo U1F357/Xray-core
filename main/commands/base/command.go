@@ -15,7 +15,7 @@ import (
 )
 
 // A Command is an implementation of a xray command
-// like xray run or xray version.
+// like xrui run or xrui version.
 type Command struct {
 	// Run runs the command.
 	// The args are the arguments after the command name.
@@ -77,7 +77,7 @@ func (c *Command) Name() string {
 func (c *Command) Usage() {
 	buildCommandText(c)
 	fmt.Fprintf(os.Stderr, "usage: %s\n", c.UsageLine)
-	fmt.Fprintf(os.Stderr, "Run 'xray help %s' for details.\n", c.LongName())
+	fmt.Fprintf(os.Stderr, "Run 'xrui help %s' for details.\n", c.LongName())
 	SetExitStatus(2)
 	Exit()
 }

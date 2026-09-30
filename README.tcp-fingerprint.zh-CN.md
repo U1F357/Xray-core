@@ -6,11 +6,11 @@
 基于 Xray-core `3519dfecbd65022ba71d9bc73e94063d0cbc8636`，将相邻目录
 `third_party/gvisor` 中提取的自定义 gVisor TCP/IP 网络栈作为 Go 库编入 Xray。
 不依赖 runsc、gVisor 沙箱或另外安装的网络工具。已构建的程序是 Linux amd64 静态二进制：
-`dist/xray-fingerprint`，不依赖 glibc（本次 Xray 集成测试在本机 Linux 完成）。
+`dist/xrui`，不依赖 glibc（本次 Xray 集成测试在本机 Linux 完成）。
 
 ## 配置
 
-使用发行包时，解压后运行 `./xray-fingerprint run -config example.json`。
+使用发行包时，解压后运行 `./xrui run -config example.json`。
 下面的路径和构建命令均以本仓库根目录为工作目录。
 
 在 freedom 的 `settings` 中只需添加 `tcpFingerprint`。以 root 启动程序，
@@ -52,7 +52,7 @@ Xray 出站的流量统计、freedom redirect、fragment、PROXY protocol 和 fi
 
 ## 按入站 SYN 自动选择指纹
 
-发行包可直接运行 `./xray-fingerprint run -config example-auto.json`。
+发行包可直接运行 `./xrui run -config example-auto.json`。
 在 freedom 中配置：
 
 ```json
@@ -95,7 +95,7 @@ PROXY protocol 包装或其他无法读取底层 socket 的路径使用备用类
 `windows/runsc`、`macos/runsc`、`linux/runsc` 及配套 sidecar 的目录；这些运行时不包含在本发行包中）：
 
 ```bash
-python3 testing/fingerprint/auto_select_e2e.py dist/xray-fingerprint
+python3 testing/fingerprint/auto_select_e2e.py dist/xrui
 ```
 
 测试建立隔离网络命名空间，在三种 runsc 沙箱内运行不启用出站指纹设置的
@@ -245,13 +245,13 @@ protoc --go_out=. --go_opt=paths=source_relative proxy/freedom/config.proto
 本地端到端测试需要 root、`ip`、`tcpdump`、`curl`、Python 3 和 `/dev/net/tun`：
 
 ```bash
-XRAY_FP_GO="$(command -v go)" python3 testing/fingerprint/e2e.py dist/xray-fingerprint
+XRAY_FP_GO="$(command -v go)" python3 testing/fingerprint/e2e.py dist/xrui
 ```
 
 自动模式有独立的离线测试（测试工具还需要 `nft` 命令，但 Xray 本身不需要）：
 
 ```bash
-python3 testing/fingerprint/auto_e2e.py dist/xray-fingerprint
+python3 testing/fingerprint/auto_e2e.py dist/xrui
 ```
 
 它在两个临时网络命名空间内运行 Xray 和接收端，以关闭全局转发、管理员设置

@@ -99,7 +99,7 @@ TCP fingerprint freedom: mode=auto detected=windows selected=windows fallback=fa
 
 ```bash
 # 无需 root 或 runsc；第二个参数可选，用于与原版双向互通
-python3 testing/fingerprint/vless_interop.py dist/xray-fingerprint /path/to/upstream-xray
+python3 testing/fingerprint/vless_interop.py dist/xrui /path/to/upstream-xray
 # root + 三种自定义 runsc：三层 Xray、入站/最终出口抓包
-python3 testing/fingerprint/multi_hop_e2e.py dist/xray-fingerprint
+python3 testing/fingerprint/multi_hop_e2e.py dist/xrui
 ```

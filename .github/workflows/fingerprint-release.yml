@@ -28,7 +28,7 @@ jobs:
       - name: Test and build static Linux amd64 release
         run: bash scripts/build-fingerprint-release.sh
       - name: VLESS propagation and TLS/Vision integration
-        run: python3 testing/fingerprint/vless_interop.py dist/xray-fingerprint
+        run: python3 testing/fingerprint/vless_interop.py dist/xrui
       - name: Race tests
         run: |
           go test -race ./proxy/vless/... ./proxy/wireguard ./proxy/tun ./proxy/freedom/... ./transport/internet ./app/proxyman/outbound ./infra/conf \
@@ -40,9 +40,9 @@ jobs:
           sudo modprobe tun
       - name: Verify manual and automatic networking with packet captures
         run: |
-          sudo python3 testing/fingerprint/e2e.py "$PWD/dist/xray-fingerprint"
-          sudo python3 testing/fingerprint/auto_e2e.py "$PWD/dist/xray-fingerprint"
-          sudo python3 testing/fingerprint/legacy_tun_e2e.py "$PWD/dist/xray-fingerprint"
+          sudo python3 testing/fingerprint/e2e.py "$PWD/dist/xrui"
+          sudo python3 testing/fingerprint/auto_e2e.py "$PWD/dist/xrui"
+          sudo python3 testing/fingerprint/legacy_tun_e2e.py "$PWD/dist/xrui"
       - name: Save packet capture reports
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -50,11 +50,35 @@ jobs:
           name: fingerprint-test-evidence
           path: testing/fingerprint/artifacts/
           if-no-files-found: ignore
+      - name: Build and test xrui container
+        run: |
+          bash scripts/build-fingerprint-image.sh xrui:test "${GITHUB_REF_NAME}"
+          sudo python3 testing/fingerprint/docker_smoke.py xrui:test
+      - name: Publish container and export offline image
+        if: startsWith(github.ref, 'refs/tags/fp-v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REGISTRY_USER: ${{ github.repository_owner }}
+        run: |
+          image="ghcr.io/${REGISTRY_USER,,}/xrui"
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$REGISTRY_USER" --password-stdin
+          docker tag xrui:test "$image:$GITHUB_REF_NAME"
+          docker push "$image:$GITHUB_REF_NAME"
+          docker tag xrui:test "$image:latest"
+          docker push "$image:latest"
+          docker image inspect "$image:$GITHUB_REF_NAME" --format '{{index .RepoDigests 0}}' > dist/IMAGE_DIGEST
+          docker save "$image:$GITHUB_REF_NAME" | gzip -1 > dist/xrui-docker-linux-amd64.tar.gz
+          (cd dist && sha256sum xrui-docker-linux-amd64.tar.gz IMAGE_DIGEST >> SHA256SUMS)
       - name: Save release assets
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: xray-fingerprint-linux-amd64
-          path: dist/
+          name: xrui-linux-amd64
+          path: |
+            dist/xrui
+            dist/xrui-linux-amd64.tar.gz
+            dist/xrui-docker-linux-amd64.tar.gz
+            dist/IMAGE_DIGEST
+            dist/SHA256SUMS
           if-no-files-found: error
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/fp-v')
@@ -62,7 +86,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
         run: |
-          gh release create "$TAG" dist/xray-fingerprint dist/xray-fingerprint-linux-amd64.tar.gz dist/SHA256SUMS \
-            --verify-tag --title "Xray TCP Fingerprint $TAG" --notes-file docs/fingerprint-release-notes.md
+          gh release create "$TAG" dist/xrui dist/xrui-linux-amd64.tar.gz dist/xrui-docker-linux-amd64.tar.gz dist/IMAGE_DIGEST dist/SHA256SUMS \
+            --verify-tag --title "xrui TCP Fingerprint $TAG" --notes-file docs/fingerprint-release-notes.md
     permissions:
       contents: write
+      packages: write

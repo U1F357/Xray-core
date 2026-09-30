@@ -15,7 +15,7 @@ import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[2]
-BINARY = Path(sys.argv[1]).resolve() if len(sys.argv)>1 else ROOT/'dist/xray-fingerprint'
+BINARY = Path(sys.argv[1]).resolve() if len(sys.argv)>1 else ROOT/'dist/xrui'
 MULTI_HOP = os.environ.get('XRAY_FP_MULTI_HOP') == '1'
 OUT = ROOT/'testing/fingerprint/artifacts'/('multi-hop' if MULTI_HOP else 'auto-selection')
 OUT.mkdir(parents=True, exist_ok=True)
@@ -126,7 +126,7 @@ print("ready",flush=True);signal.pause()
  wait_capture(captures[-1], OUT/'capture-out.log')
  for i,profile in enumerate(PROFILES):
   bundle=OUT/profile;rootfs=bundle/'rootfs';rootfs.mkdir(parents=True,exist_ok=True)
-  shutil.copy2(BINARY,rootfs/'xray')
+  shutil.copy2(BINARY,rootfs/'xrui')
   for path in ['proc','dev','tmp']: (rootfs/path).mkdir(exist_ok=True)
   client={'log':{'loglevel':'info'},'inbounds':[],'outbounds':[],'routing':{'rules':[]}}
   for mode in range(3):
@@ -139,7 +139,7 @@ print("ready",flush=True);signal.pause()
     client['outbounds'][-1]['streamSettings'].update({'security':'tls','tlsSettings':{'serverName':'fp.test','certificates':[{'certificate':(OUT/'cert.pem').read_text().splitlines(),'usage':'verify'}]}})
    client['routing']['rules'].append({'type':'field','inboundTag':[tag],'outboundTag':tag})
   (rootfs/'client.json').write_text(json.dumps(client))
-  spec={'ociVersion':'1.0.2','root':{'path':str(rootfs),'readonly':True},'process':{'terminal':False,'user':{'uid':0,'gid':0},'args':['/xray','run','-config','/client.json'],'env':['PATH=/','GOMAXPROCS=2'],'cwd':'/','noNewPrivileges':True},'mounts':[{'destination':'/proc','type':'proc','source':'proc'},{'destination':'/dev','type':'tmpfs','source':'tmpfs'},{'destination':'/tmp','type':'tmpfs','source':'tmpfs'}],'linux':{'namespaces':[{'type':'network','path':'/var/run/netns/'+PREFIX+str(i)},{'type':'pid'},{'type':'ipc'},{'type':'uts'},{'type':'mount'}]}}
+  spec={'ociVersion':'1.0.2','root':{'path':str(rootfs),'readonly':True},'process':{'terminal':False,'user':{'uid':0,'gid':0},'args':['/xrui','run','-config','/client.json'],'env':['PATH=/','GOMAXPROCS=2'],'cwd':'/','noNewPrivileges':True},'mounts':[{'destination':'/proc','type':'proc','source':'proc'},{'destination':'/dev','type':'tmpfs','source':'tmpfs'},{'destination':'/tmp','type':'tmpfs','source':'tmpfs'}],'linux':{'namespaces':[{'type':'network','path':'/var/run/netns/'+PREFIX+str(i)},{'type':'pid'},{'type':'ipc'},{'type':'uts'},{'type':'mount'}]}}
   (bundle/'config.json').write_text(json.dumps(spec))
   runtime=[str(RUNTIMES/profile/'runsc'),'--root='+str(bundle/'state'),'--ignore-cgroups','--network=sandbox','--platform=systrap']
   name=PREFIX+profile;containers.append((runtime,name))
@@ -193,4 +193,4 @@ finally:
  for log in logs:log.close()
  # Keep reproducible configs/captures, not duplicate binaries or runtime state.
  for profile in PROFILES:
-  (OUT/profile/'rootfs/xray').unlink(missing_ok=True)
+  (OUT/profile/'rootfs/xrui').unlink(missing_ok=True)

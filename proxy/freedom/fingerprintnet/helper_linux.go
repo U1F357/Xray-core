@@ -236,7 +236,7 @@ func prepareEnvironment() (*environment, error) {
 		}
 		// Forward packets entering our own interface. Shared real interfaces
 		// are enabled lazily when a destination is actually dialed.
-		if err := os.WriteFile(forwardingPath(e.owner.Device), []byte("1\n"), 0600); err != nil {
+		if err := enableForwarding(e.owner.Device); err != nil {
 			return err
 		}
 		return installRules(e.owner)

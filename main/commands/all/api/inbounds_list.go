@@ -10,7 +10,7 @@ var cmdListInbounds = &base.Command{
 	UsageLine:   "{{.Exec}} api lsi [--server=127.0.0.1:8080] [--isOnlyTags=true]",
 	Short:       "List inbounds",
 	Long: `
-List inbounds in Xray.
+List inbounds in xrui.
 
 Arguments:
 

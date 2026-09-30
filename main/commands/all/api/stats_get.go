@@ -10,7 +10,7 @@ var cmdGetStats = &base.Command{
 	UsageLine:   "{{.Exec}} api stats [--server=127.0.0.1:8080] [-name '']",
 	Short:       "Retrieve statistics",
 	Long: `
-Retrieve the statistics from Xray.
+Retrieve the statistics from xrui.
 
 Arguments:
 

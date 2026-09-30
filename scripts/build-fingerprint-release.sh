@@ -7,18 +7,22 @@ if [[ "$(go env GOOS)/$(go env GOARCH)" != linux/amd64 ]]; then
 fi
 python3 scripts/check-gvisor.py
 mkdir -p dist
+python3 scripts/fetch-geodata.py
 go test ./proxy/vless/... ./proxy/freedom/... ./proxy/wireguard ./proxy/tun ./transport/internet ./transport/internet/tcp ./app/proxyman/inbound ./app/proxyman/outbound ./infra/conf \
   -run 'TestFreedom|TestOutbound|TestTCP|TestFingerprint|TestCanceledReply|TestProcessIdentity' -count=1
-CGO_ENABLED=0 go build -trimpath -o dist/xray-fingerprint ./main
+CGO_ENABLED=0 go build -trimpath -o dist/xrui ./main
 stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
-cp dist/xray-fingerprint README.md README.tcp-fingerprint.zh-CN.md LICENSE "$stage/"
+cp dist/geodata/*.dat "$stage/"
+mkdir -p "$stage/licenses/geodata"
+cp dist/geodata/LICENSE dist/geodata/SOURCE.json "$stage/licenses/geodata/"
+cp dist/xrui README.md README.tcp-fingerprint.zh-CN.md LICENSE "$stage/"
 cp testing/fingerprint/example{,-auto}.json "$stage/"
 mkdir -p "$stage/licenses/gvisor" "$stage/docs"
-cp docs/vless-fingerprint.zh-CN.md "$stage/docs/"
+cp docs/docker.zh-CN.md docs/vless-fingerprint.zh-CN.md "$stage/docs/"
 cp -r testing/fingerprint/example-chain "$stage/"
 cp third_party/gvisor/LICENSE third_party/gvisor/AUTHORS third_party/gvisor/CUSTOM_FINGERPRINT.txt "$stage/licenses/gvisor/"
 git rev-parse HEAD > "$stage/SOURCE_COMMIT"
 go version > "$stage/BUILD_TOOLCHAIN"
-tar -czf dist/xray-fingerprint-linux-amd64.tar.gz -C "$stage" .
-(cd dist && sha256sum xray-fingerprint xray-fingerprint-linux-amd64.tar.gz > SHA256SUMS)
+tar -czf dist/xrui-linux-amd64.tar.gz -C "$stage" .
+(cd dist && sha256sum xrui xrui-linux-amd64.tar.gz > SHA256SUMS)

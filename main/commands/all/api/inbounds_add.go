@@ -14,7 +14,7 @@ var cmdAddInbounds = &base.Command{
 	UsageLine:   "{{.Exec}} api adi [--server=127.0.0.1:8080] <c1.json> [c2.json]...",
 	Short:       "Add inbounds",
 	Long: `
-Add inbounds to Xray.
+Add inbounds to xrui.
 
 Arguments:
 

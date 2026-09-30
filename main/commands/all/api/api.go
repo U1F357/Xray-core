@@ -4,11 +4,11 @@ import (
 	"github.com/xtls/xray-core/main/commands/base"
 )
 
-// CmdAPI calls an API in an Xray process
+// CmdAPI calls an API in an xrui process
 var CmdAPI = &base.Command{
 	UsageLine: "{{.Exec}} api",
-	Short:     "Call an API in an Xray process",
-	Long: `{{.Exec}} {{.LongName}} provides tools to manipulate Xray via its API.
+	Short:     "Call an API in an xrui process",
+	Long: `{{.Exec}} {{.LongName}} provides tools to manipulate xrui via its API.
 `,
 	Commands: []*base.Command{
 		cmdRestartLogger,

@@ -138,6 +138,19 @@ func forwardingPath(name string) string {
 	return "/proc/sys/net/ipv4/conf/" + name + "/forwarding"
 }
 
+// Docker may mount /proc/sys read-only while setting forwarding at namespace
+// creation. An already enabled interface needs no write or extra privilege.
+func enableForwarding(name string) error {
+	value, err := os.ReadFile(forwardingPath(name))
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(string(value)) == "1" {
+		return nil
+	}
+	return os.WriteFile(forwardingPath(name), []byte("1\n"), 0600)
+}
+
 func acquireForwarding(r *registry, path, token string, link netlink.Link) error {
 	a := link.Attrs()
 	if strings.ContainsAny(a.Name, "/\x00") {
@@ -163,7 +176,7 @@ func acquireForwarding(r *registry, path, token string, link netlink.Link) error
 	if err := updateForwardingGuard(a.Index, lease, r.Owners); err != nil {
 		return err
 	}
-	return os.WriteFile(forwardingPath(a.Name), []byte("1\n"), 0600)
+	return enableForwarding(a.Name)
 }
 
 func cleanupOwner(r *registry, token string) error {

@@ -12,7 +12,7 @@ var cmdRemoveRules = &base.Command{
 	UsageLine:   "{{.Exec}} api rmrules [--server=127.0.0.1:8080] [ruleTag]...",
 	Short:       "Remove routing rules by ruleTag",
 	Long: `
-Remove routing rules by ruleTag from Xray.
+Remove routing rules by ruleTag from xrui.
 
 Arguments:
 

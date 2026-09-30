@@ -2,7 +2,7 @@
 """Root-only local SOCKS -> freedom -> gVisor -> TUN test; no public network.
 
 Creates three temporary TUNs without changing forwarding/firewall settings.
-Run: python3 testing/fingerprint/e2e.py ../dist/xray-fingerprint
+Run: python3 testing/fingerprint/e2e.py ../dist/xrui
 """
 from capture_ready import wait_capture
 import concurrent.futures
