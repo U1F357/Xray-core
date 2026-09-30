@@ -4,6 +4,7 @@
 Creates three temporary TUNs without changing forwarding/firewall settings.
 Run: python3 testing/fingerprint/e2e.py ../dist/xray-fingerprint
 """
+from capture_ready import wait_capture
 import concurrent.futures
 import hashlib
 import http.server
@@ -151,6 +152,7 @@ try:
             log = (OUT/f'{name}-capture.log').open('w')
             logs.append(log)
             captures.append(subprocess.Popen(['tcpdump', '--immediate-mode', '-i', interface, '-s', '0', '-U', '-w', str(OUT/f'{name}.pcap'), 'tcp[tcpflags] & 0x12 == 2'], stdout=log, stderr=log))
+            wait_capture(captures[-1], OUT/f'{name}-capture.log')
         config['outbounds'].append({'tag': name, 'protocol': 'freedom', 'settings': settings, 'streamSettings': {'sockopt': {'domainStrategy': 'ForceIPv4'}}})
         config['routing']['rules'].append({'type': 'field', 'inboundTag': [name], 'outboundTag': name})
     server = http.server.ThreadingHTTPServer(('0.0.0.0', 0), HTTP)
@@ -212,6 +214,7 @@ try:
     caplog = (OUT/'blocked-capture.log').open('w')
     logs.append(caplog)
     captures.append(subprocess.Popen(['tcpdump', '--immediate-mode', '-i', interfaces[0], '-s', '0', '-U', '-w', str(OUT/'blocked.pcap'), 'tcp[tcpflags] & 0x12 == 2'], stdout=caplog, stderr=caplog))
+    wait_capture(captures[-1], OUT/'blocked-capture.log')
     xray = subprocess.Popen([str(BINARY), 'run', '-config', str(path)], stdout=log, stderr=log)
     time.sleep(.5)
     blocked = subprocess.run(['curl', '--noproxy', '', '--socks5-hostname', f'127.0.0.1:{ports["windows"]}', '-fsS', '--max-time', '3', f'http://fingerprint.test:{httpport}/'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)

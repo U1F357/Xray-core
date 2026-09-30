@@ -4,6 +4,7 @@
 The host's routes, firewall and forwarding flags are never modified. Two network
 namespaces simulate Xray and an external server; captures are at the receiver.
 """
+from capture_ready import wait_capture
 import concurrent.futures
 import json
 import os
@@ -155,7 +156,7 @@ signal.pause()
 '''
     server = launch(['python3','-u','-c',server_code],'server',PEER)
     capture = launch(['tcpdump','--immediate-mode','-i','eth0','-s','0','-U','-w',str(OUT/'receiver.pcap'),'tcp[tcpflags] & 0x12 == 2'],'capture',PEER)
-    time.sleep(.3)
+    wait_capture(capture, OUT/'capture.log')
     first = start('automatic')
     assert len([x for x in links() if x.startswith('xfp')]) == 3
     addresses = json.loads(output(['ip','-j','addr']))
@@ -169,7 +170,7 @@ signal.pause()
     command(['nft','-f','-'],LAB,input='add chain inet administrator forward { policy accept; }\n',text=True)
     command(['ip','route','add','198.51.100.2/32','via','192.0.2.1'],PEER)
     guard_capture = launch(['tcpdump','--immediate-mode','-i','eth0','-Q','in','-U','-w',str(OUT/'unrelated.pcap'),'udp and src host 192.0.2.2 and dst host 198.51.100.2'],'unrelated-capture',PEER)
-    time.sleep(.2)
+    wait_capture(guard_capture, OUT/'unrelated-capture.log')
     command(['python3','-c','import socket;socket.socket(socket.AF_INET,socket.SOCK_DGRAM).sendto(b"unrelated",("198.51.100.2",38499))'],PEER)
     time.sleep(.2)
     guard_capture.send_signal(signal.SIGINT);guard_capture.wait(timeout=5)

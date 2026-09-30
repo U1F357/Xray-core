@@ -2,6 +2,7 @@
 """Run real Xray VLESS clients inside three gVisor runtimes; verify ingress/egress SYNs.
 All links, NAT rules and forwarding changes are confined to disposable netns.
 """
+from capture_ready import wait_capture
 import concurrent.futures
 import json
 import os
@@ -121,7 +122,8 @@ print("ready",flush=True);signal.pause()
  captures=[]
  for i in range(3):captures.append(launch(['tcpdump','--immediate-mode','-i','client'+str(i),'-U','-w',str(OUT/f'inbound-{PROFILES[i]}.pcap'),'(tcp dst port 12345 or tcp dst port 12346) and tcp[tcpflags] & 0x12 == 2'],'capture-in-'+PROFILES[i],SERVER))
  captures.append(launch(['tcpdump','--immediate-mode','-i','eth0','-U','-w',str(OUT/'outbound.pcap'),'tcp[tcpflags] & 0x12 == 2'],'capture-out',RECEIVER))
- time.sleep(.3)
+ for i,profile in enumerate(PROFILES):wait_capture(captures[i], OUT/('capture-in-'+profile+'.log'))
+ wait_capture(captures[-1], OUT/'capture-out.log')
  for i,profile in enumerate(PROFILES):
   bundle=OUT/profile;rootfs=bundle/'rootfs';rootfs.mkdir(parents=True,exist_ok=True)
   shutil.copy2(BINARY,rootfs/'xray')
