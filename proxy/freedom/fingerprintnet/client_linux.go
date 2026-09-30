@@ -20,6 +20,7 @@ import (
 )
 
 const helperArgument = "__xray_fingerprint_network"
+const helperArgument6 = "__xray_fingerprint_network6"
 
 type message struct {
 	ID          uint64
@@ -59,7 +60,9 @@ func unixConn(file *os.File) (*net.UnixConn, error) {
 }
 
 // Prepare creates the network before the userspace TCP stack starts.
-func Prepare() (*Network, error) {
+func Prepare() (*Network, error)     { return prepare(false) }
+func PrepareIPv6() (*Network, error) { return prepare(true) }
+func prepare(ipv6 bool) (*Network, error) {
 	if os.Geteuid() != 0 {
 		return nil, fmt.Errorf("automatic tcpFingerprint networking requires Linux root")
 	}
@@ -77,7 +80,11 @@ func Prepare() (*Network, error) {
 		return nil, err
 	}
 	child := os.NewFile(uintptr(fds[1]), "fingerprint-child")
-	cmd := exec.Command(path, helperArgument)
+	argument := helperArgument
+	if ipv6 {
+		argument = helperArgument6
+	}
+	cmd := exec.Command(path, argument)
 	cmd.ExtraFiles = []*os.File{child}
 	cmd.Stderr = os.Stderr
 	// A signal to Xray's process group must not kill its cleanup helper.
@@ -138,13 +145,18 @@ func Prepare() (*Network, error) {
 // PrepareDestination enables forwarding on the interface selected by the host
 // route for this destination. No default route or global ip_forward is changed.
 func (n *Network) PrepareDestination(ctx context.Context, address string) error {
+	_, err := n.PrepareDestinationMTU(ctx, address)
+	return err
+}
+
+func (n *Network) PrepareDestinationMTU(ctx context.Context, address string) (uint32, error) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	if n.closed {
-		return os.ErrClosed
+		return 0, os.ErrClosed
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return 0, err
 	}
 	deadline := time.Now().Add(5 * time.Second)
 	if limit, ok := ctx.Deadline(); ok && limit.Before(deadline) {
@@ -159,35 +171,41 @@ func (n *Network) PrepareDestination(ctx context.Context, address string) error 
 		}
 		n.control.SetDeadline(time.Time{})
 	}()
-	return n.exchange(message{Destination: address})
+	reply, err := n.exchangeReply(message{Destination: address})
+	return reply.MTU, err
 }
 
 func (n *Network) exchange(request message) error {
+	_, err := n.exchangeReply(request)
+	return err
+}
+
+func (n *Network) exchangeReply(request message) (message, error) {
 	c := n.control
 	n.requestID++
 	request.ID = n.requestID
 	data, _ := json.Marshal(request)
 	if _, err := c.Write(data); err != nil {
-		return err
+		return message{}, err
 	}
 	buffer := make([]byte, 8192)
 	for {
 		size, err := c.Read(buffer)
 		if err != nil {
-			return err
+			return message{}, err
 		}
 		var reply message
 		if err := json.Unmarshal(buffer[:size], &reply); err != nil {
-			return err
+			return message{}, err
 		}
 		// A canceled request may leave its reply queued on the socket.
 		if reply.ID != request.ID {
 			continue
 		}
 		if reply.Error != "" {
-			return errors.New(reply.Error)
+			return message{}, errors.New(reply.Error)
 		}
-		return nil
+		return reply, nil
 	}
 }
 

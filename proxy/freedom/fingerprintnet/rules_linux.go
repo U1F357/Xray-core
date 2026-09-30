@@ -54,14 +54,26 @@ func interfaceMatch(key expr.MetaKey, name string) []expr.Any {
 
 func addressMatch(source bool, address net.IP) []expr.Any {
 	offset := uint32(16)
+	length := uint32(4)
+	family := byte(2)
+	data := address.To4()
 	if source {
 		offset = 12
 	}
+	if data == nil {
+		family = 10
+		length = 16
+		data = address.To16()
+		offset = 24
+		if source {
+			offset = 8
+		}
+	}
 	return []expr.Any{
 		&expr.Meta{Key: expr.MetaKeyNFPROTO, Register: 1},
-		&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: []byte{2}}, // NFPROTO_IPV4
-		&expr.Payload{DestRegister: 1, Base: expr.PayloadBaseNetworkHeader, Offset: offset, Len: 4},
-		&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: address.To4()},
+		&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: []byte{family}},
+		&expr.Payload{DestRegister: 1, Base: expr.PayloadBaseNetworkHeader, Offset: offset, Len: length},
+		&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: data},
 	}
 }
 
@@ -86,7 +98,11 @@ func installRules(o owner) error {
 	if err != nil {
 		return err
 	}
-	table := c.AddTable(&nftables.Table{Family: nftables.TableFamilyIPv4, Name: o.Table})
+	family := nftables.TableFamilyIPv4
+	if net.ParseIP(o.Address).To4() == nil {
+		family = nftables.TableFamilyIPv6
+	}
+	table := c.AddTable(&nftables.Table{Family: family, Name: o.Table})
 	c.AddChain(&nftables.Chain{Name: "prerouting", Table: table, Type: nftables.ChainTypeNAT, Hooknum: nftables.ChainHookPrerouting, Priority: nftables.ChainPriorityNATDest})
 	post := c.AddChain(&nftables.Chain{Name: "postrouting", Table: table, Type: nftables.ChainTypeNAT, Hooknum: nftables.ChainHookPostrouting, Priority: nftables.ChainPriorityNATSource})
 	c.AddRule(&nftables.Rule{Table: table, Chain: post, UserData: []byte(o.Table), Exprs: append(outgoing(o), &expr.Masq{})})
@@ -102,7 +118,7 @@ func installRules(o owner) error {
 		if chain.Hooknum == nil || *chain.Hooknum != *nftables.ChainHookForward {
 			continue
 		}
-		if chain.Table.Family != nftables.TableFamilyIPv4 && chain.Table.Family != nftables.TableFamilyINet {
+		if chain.Table.Family != family && chain.Table.Family != nftables.TableFamilyINet {
 			continue
 		}
 		if chain.Type != nftables.ChainTypeFilter {
@@ -143,7 +159,7 @@ func removeRules(tableName string) error {
 			}
 		}
 	}
-	tables, err := c.ListTablesOfFamily(nftables.TableFamilyIPv4)
+	tables, err := c.ListTables()
 	if err != nil {
 		return err
 	}

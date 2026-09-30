@@ -57,8 +57,8 @@ func ValidateTCPFingerprint(c *Config) error {
 		return fmt.Errorf("tcpFingerprintSettings.tun must name a preconfigured Linux TUN")
 	}
 	a, err := netip.ParseAddr(s.Address)
-	if err != nil || !a.Is4() || !a.IsGlobalUnicast() {
-		return fmt.Errorf("tcpFingerprintSettings.address must be a unicast IPv4 address for netstack")
+	if err != nil || !a.IsGlobalUnicast() || a.Is4In6() || a.Zone() != "" {
+		return fmt.Errorf("tcpFingerprintSettings.address must be a unicast IPv4 or IPv6 address for netstack")
 	}
 	return nil
 }
@@ -88,11 +88,11 @@ func validateFingerprintStream(s *internet.MemoryStreamConfig) error {
 }
 
 func (h *Handler) fingerprintAddress(ctx context.Context, address net.Address) (net.Address, error) {
-	if address.Family().IsIPv4() {
+	if address.Family().IsIP() {
 		return address, nil
 	}
 	if !address.Family().IsDomain() {
-		return nil, fmt.Errorf("tcpFingerprint currently supports IPv4 destinations only")
+		return nil, fmt.Errorf("tcpFingerprint requires an IP address or domain")
 	}
 	strategy := h.resolveStrategy
 	if !strategy.HasStrategy() {
@@ -107,17 +107,26 @@ func (h *Handler) fingerprintAddress(ctx context.Context, address net.Address) (
 		}
 	}
 	if !strategy.HasStrategy() || err != nil {
-		ips, err = net.DefaultResolver.LookupIP(ctx, "ip4", address.Domain())
+		ips, err = net.DefaultResolver.LookupIP(ctx, "ip", address.Domain())
 		if err != nil {
 			return nil, err
 		}
 	}
-	for _, ip := range ips {
-		if ip4 := ip.To4(); ip4 != nil {
-			return net.IPAddress(ip4), nil
+	// Preserve IPv4 preference for the default system resolver. Explicit DNS
+	// strategies retain the ordering supplied by Xray (including ForceIPv6).
+	if !strategy.HasStrategy() {
+		for _, ip := range ips {
+			if ip4 := ip.To4(); ip4 != nil {
+				return net.IPAddress(ip4), nil
+			}
 		}
 	}
-	return nil, fmt.Errorf("tcpFingerprint: no IPv4 address for %s", address.Domain())
+	for _, ip := range ips {
+		if ip.To16() != nil {
+			return net.IPAddress(ip), nil
+		}
+	}
+	return nil, fmt.Errorf("tcpFingerprint: no IP address for %s", address.Domain())
 }
 
 // Profiles are immutable and have independent stacks; selection is per session.

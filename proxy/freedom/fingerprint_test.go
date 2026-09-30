@@ -57,8 +57,8 @@ func TestFingerprintStreamRestrictions(t *testing.T) {
 
 func TestFingerprintAddress(t *testing.T) {
 	h := &Handler{config: &Config{}}
-	if _, err := h.fingerprintAddress(context.Background(), net.ParseAddress("2001:db8::1")); err == nil {
-		t.Fatal("accepted IPv6")
+	if addr, err := h.fingerprintAddress(context.Background(), net.ParseAddress("2001:db8::1")); err != nil || addr.IP().String() != "2001:db8::1" {
+		t.Fatalf("IPv6 address: %v %v", addr, err)
 	}
 	addr, err := h.fingerprintAddress(context.Background(), net.ParseAddress("192.0.2.1"))
 	if err != nil || addr.String() != "192.0.2.1" {

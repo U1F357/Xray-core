@@ -1,6 +1,6 @@
 # xrui 容器镜像
 
-镜像：`ghcr.io/u1f357/xrui:fp-v0.2.1`，同时发布 `latest`。当前仅 Linux amd64。
+镜像：`ghcr.io/u1f357/xrui:fp-v0.3.0`，同时发布 `latest`。当前仅 Linux amd64。
 程序文件和进程名是 `xrui`，镜像默认读取 `/usr/local/etc/xrui/` 下的配置。
 JSON 字段和环境变量沿用 Xray，包括 `XRAY_LOCATION_ASSET`。
 
@@ -16,14 +16,14 @@ JSON 字段和环境变量沿用 Xray，包括 `XRAY_LOCATION_ASSET`。
 下面演示本机 SOCKS 1080；实际部署按配置调整端口及认证。
 
 ```bash
-docker pull ghcr.io/u1f357/xrui:fp-v0.2.1
+docker pull ghcr.io/u1f357/xrui:fp-v0.3.0
 docker run -d --name xrui --restart unless-stopped \
   --cap-add=NET_ADMIN --device=/dev/net/tun \
   --sysctl net.ipv4.ip_forward=1 \
   --sysctl net.ipv4.conf.default.forwarding=1 \
   -p 127.0.0.1:1080:1080 \
   -v "$PWD/config:/usr/local/etc/xrui:ro" \
-  ghcr.io/u1f357/xrui:fp-v0.2.1
+  ghcr.io/u1f357/xrui:fp-v0.3.0
 ```
 
 示例 `config/config.json`：
@@ -59,6 +59,11 @@ docker stop xrui
 自动指纹功能也不依赖这些外部命令。启动会自动创建内部网络，正常停止时清理。
 容器外若有终止并重建 TCP 的代理，仍可能覆盖最终指纹。
 
+## IPv6 出口
+
+`fp-v0.3.0` 镜像已包含 IPv6 指纹出口。
+双栈 Docker 网络及容器 IPv6 转发参数见 [IPv6 使用说明](ipv6-fingerprint.zh-CN.md)。
+
 ## 离线导入
 
 Release 附带 `xrui-docker-linux-amd64.tar.gz`，无需访问 GHCR 即可导入：
@@ -68,7 +73,7 @@ sha256sum --ignore-missing -c SHA256SUMS
 docker load -i xrui-docker-linux-amd64.tar.gz
 ```
 
-导入后的标签同样是 `ghcr.io/u1f357/xrui:fp-v0.2.1`。镜像 digest 记录在 Release 的
+导入后的标签同样是 `ghcr.io/u1f357/xrui:fp-v0.3.0`。镜像 digest 记录在 Release 的
 `IMAGE_DIGEST`，可用于固定部署版本。新建 GHCR 包可能默认私有；若匿名拉取被拒绝，
 可使用上述公开 Release 镜像包，或登录具有该包读取权限的 GitHub 账户。
 

@@ -41,9 +41,25 @@
 | `macos` | `65535_2-1-3-1-1-8-4-0-0_*_6` |
 | `linux` | `65535_2-4-8-1-3_*_9` |
 
-`*` 为 MSS，由链路 MTU 决定；MTU 1500 时本次抓包为 1460。
+`*` 为 MSS，由链路 MTU 决定；MTU 1500 时 IPv4 为 1460，IPv6 为 1440。
 不填 `tcpFingerprint` 时使用原来的 freedom 系统拨号。UDP 仍使用原路径。
 三个选项可同时用于不同出站；程序为各出站自动分配独占接口和不同地址。
+
+自动联网模式在每次新建 TCP 连接时读取目标路由、出口接口 MTU 和路由的
+`advmss` 限制，取它们与内部 TUN MTU（1500）的较小值。这同时限制 SYN
+中公布的 MSS 和实际发送的数据段大小，各连接独立保存取值。无需新增配置，
+INFO 日志会记录 `TCP fingerprint MTU`、`routeMTU` 和 `synMSS`。
+手动 TUN 模式仍使用 `tcpFingerprintSettings.mtu`。
+
+这是系统路由信息查询，不是主动探测整条互联网路径。它能适配系统已知的较小
+MTU，也会在后续新连接中重新读取变化；已建立连接不会重新协商 SYN MSS。
+若中间链路 MTU 更小但系统尚不知道，尤其 ICMP 反馈被阻断时，仍可能出现
+大包卡住；未实现通过丢包主动搜索路径 MTU 的黑洞恢复机制。大于 1500 的链路
+保守使用 1500，IPv6 要求有效 MTU 至少为 1280。`fp-v0.3.0` 起包含 MTU 自动适配及 IPv6 出口支持。
+
+当前源码还包含固定的 TTL/Hop Limit、源端口范围、IPv4 ID 和 IPv6 Flow Label
+预设；完整字段表、依据与未模拟的行为见[平台预设说明](docs/tcp-platform-presets.zh-CN.md)。
+不新增动态特征探测，此扩展从 fp-v0.3.0 起提供。
 
 每个出站的 TCP 握手、选项、重传和窗口管理由自己的 gVisor TCP 栈执行。
 应用 TLS 数据原样穿过该连接，HTTPS 可用；这里配置的是 TCP 指纹，不是 TLS 指纹。
@@ -88,7 +104,7 @@ PROXY protocol 包装或其他无法读取底层 socket 的路径使用备用类
 
 观察到的总是最后一跳 TCP 发起端。如果 CDN/中转重新建立了 TCP，识别到的是
 它的协议栈；单个复用连接内不同原始用户无法凭这个 SYN 再区分。
-出站仍受本文所述 Linux、IPv4、TUN/nftables 和权限限制。
+出站仍受本文所述 Linux、TUN/nftables 和权限限制。
 
 端到端验证（需 root、ip、nft、tcpdump、curl、openssl、Python，以及外部准备的
 三种自定义 runsc 完整运行时；设置 `XRAY_FP_RUNSC_DIR` 指向包含
@@ -215,9 +231,10 @@ ip tuntap del dev xrfp0 mode tun
 
 ## 当前范围
 
-- 当前实现验证了 Linux amd64、IPv4。IPv6 目标会报错，不会回退成系统 TCP。
-- 默认域名通过宿主解析器解析 IPv4；也可用 `streamSettings.sockopt.domainStrategy`
-  选择 Xray DNS，例如 `ForceIPv4`。不支持自定义 Happy Eyeballs 参数。
+- 当前源码支持 Linux amd64 的 IPv4/IPv6 指纹出口；IPv6 要求当前网络空间已启用全局 IPv6 转发。
+  程序不自动改动该全局设置，具体条件与已发布版本区别见 [IPv6 说明](docs/ipv6-fingerprint.zh-CN.md)。
+- 默认域名通过宿主解析器获取 A/AAAA 并优先 IPv4；也可用 `streamSettings.sockopt.domainStrategy`
+  选择 Xray DNS，例如 `ForceIPv4` / `ForceIPv6`。不支持自定义 Happy Eyeballs 参数或跨地址族连接竞速。
 - 指纹出站只支持普通 TCP transport；拒绝链式 `dialerProxy`、`sendThrough`、mux、
   transport TLS/REALITY、finalmask、TCP transport headers 和其他 sockopt。
   用户连接内的 HTTPS/TLS 不受这个限制。
@@ -292,3 +309,12 @@ python3 scripts/update-gvisor.py --bazel /path/to/bazel --update
 
 已实际重新运行导出并核对全部 526 个文件。替换的 gVisor 版本仍较原版 Xray 的依赖更新；
 native 保留该版本原生行为，并不意味着恢复旧版本全部内部实现。
+
+IPv6 自动模式使用独立 ULA /126 和 NAT66，仅首次连接时创建；手动地址也可用 IPv6。完整配置见 [IPv6 说明](docs/ipv6-fingerprint.zh-CN.md)。
+
+### mihomo 的 REALITY 认证失败
+
+若 mihomo 连接 0.2 系列时报 `REALITY authentication failed`，请使用
+`client-fingerprint: chrome`，并在节点 `reality-opts` 下添加
+`support-x25519mlkem768: true`。这是上游 REALITY 基线与 mihomo 默认设置的
+兼容性差异，详见[配置与复现说明](docs/reality-mihomo.zh-CN.md)。

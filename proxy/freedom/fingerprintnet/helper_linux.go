@@ -19,7 +19,7 @@ import (
 )
 
 func init() {
-	if len(os.Args) != 2 || os.Args[1] != helperArgument {
+	if len(os.Args) != 2 || (os.Args[1] != helperArgument && os.Args[1] != helperArgument6) {
 		return
 	}
 	if err := serveHelper(); err != nil {
@@ -76,7 +76,7 @@ func serveHelper() error {
 		case <-done:
 		}
 	}()
-	env, err := prepareEnvironment()
+	env, err := prepareEnvironment(os.Args[1] == helperArgument6)
 	if err != nil {
 		writeReply(control, message{Error: err.Error()}, nil)
 		return nil
@@ -113,7 +113,9 @@ func serveHelper() error {
 			writeReply(control, reply, nil)
 			return nil
 		}
-		if err := env.prepareDestination(request.Destination); err != nil {
+		mtu, err := env.prepareDestination(request.Destination)
+		reply.MTU = mtu
+		if err != nil {
 			reply.Error = err.Error()
 		}
 		if err := writeReply(control, reply, nil); err != nil {
@@ -189,11 +191,19 @@ func openTemporaryTUN(name string) (*os.File, error) {
 	return os.NewFile(uintptr(fd), name), nil
 }
 
-func prepareEnvironment() (*environment, error) {
+func prepareEnvironment(ipv6 bool) (*environment, error) {
 	// Mixing nftables exceptions with active legacy iptables forwarding chains
 	// cannot reliably override a legacy DROP. Fail explicitly instead of silently
 	// creating a network which will never complete its TCP handshakes.
-	if tables, err := os.ReadFile("/proc/net/ip_tables_names"); err == nil && strings.TrimSpace(string(tables)) != "" {
+	legacyPath := "/proc/net/ip_tables_names"
+	if ipv6 {
+		legacyPath = "/proc/net/ip6_tables_names"
+		value, err := os.ReadFile("/proc/sys/net/ipv6/conf/all/forwarding")
+		if err != nil || strings.TrimSpace(string(value)) != "1" {
+			return nil, fmt.Errorf("IPv6 tcpFingerprint requires net.ipv6.conf.all.forwarding=1 in this network namespace; host setting is not changed automatically")
+		}
+	}
+	if tables, err := os.ReadFile(legacyPath); err == nil && strings.TrimSpace(string(tables)) != "" {
 		return nil, fmt.Errorf("automatic tcpFingerprint networking requires nftables/iptables-nft; legacy iptables tables are active (manual tcpFingerprintSettings remains available)")
 	}
 	var random [6]byte
@@ -203,12 +213,16 @@ func prepareEnvironment() (*environment, error) {
 	token := hex.EncodeToString(random[:])
 	e := &environment{token: token, mtu: 1500, interfaces: make(map[int]string)}
 	err := withRegistry(func(r *registry, path string) error {
-		host, err := allocateAddress(r)
+		allocate := allocateAddress
+		if ipv6 {
+			allocate = allocateAddress6
+		}
+		host, err := allocate(r)
 		if err != nil {
 			return err
 		}
 		guest := append(net.IP(nil), host...)
-		guest[3]++
+		guest[len(guest)-1]++
 		e.owner = owner{PID: os.Getpid(), Start: processStart(os.Getpid()), Device: "xfp" + token, Address: guest.String(), Table: "xray_fp_" + token}
 		r.Owners[token] = e.owner
 		if err := saveRegistry(path, r); err != nil {
@@ -228,7 +242,13 @@ func prepareEnvironment() (*environment, error) {
 		if err := netlink.LinkSetMTU(link, int(e.mtu)); err != nil {
 			return err
 		}
-		if err := netlink.AddrAdd(link, &netlink.Addr{IPNet: &net.IPNet{IP: host, Mask: net.CIDRMask(30, 32)}}); err != nil {
+		mask := net.CIDRMask(30, 32)
+		flags := 0
+		if ipv6 {
+			mask = net.CIDRMask(126, 128)
+			flags = unix.IFA_F_NODAD
+		}
+		if err := netlink.AddrAdd(link, &netlink.Addr{IPNet: &net.IPNet{IP: host, Mask: mask}, Flags: flags}); err != nil {
 			return err
 		}
 		if err := netlink.LinkSetUp(link); err != nil {
@@ -236,8 +256,10 @@ func prepareEnvironment() (*environment, error) {
 		}
 		// Forward packets entering our own interface. Shared real interfaces
 		// are enabled lazily when a destination is actually dialed.
-		if err := enableForwarding(e.owner.Device); err != nil {
-			return err
+		if !ipv6 {
+			if err := enableForwarding(e.owner.Device); err != nil {
+				return err
+			}
 		}
 		return installRules(e.owner)
 	})
@@ -251,37 +273,53 @@ func prepareEnvironment() (*environment, error) {
 	return e, nil
 }
 
-func (e *environment) prepareDestination(address string) error {
-	ip := net.ParseIP(address).To4()
-	if ip == nil {
-		return fmt.Errorf("expected an IPv4 destination")
+// Refresh routing and MTU on every connection, even when forwarding is leased.
+func (e *environment) prepareDestination(address string) (uint32, error) {
+	ip := net.ParseIP(address)
+	if ip == nil || (ip.To4() == nil) != (net.ParseIP(e.owner.Address).To4() == nil) {
+		return 0, fmt.Errorf("destination does not match network address family")
 	}
-	// Query only; this does not transmit packets or rewrite routes.
 	routes, err := netlink.RouteGetWithOptions(ip, &netlink.RouteGetOptions{Iif: e.owner.Device, SrcAddr: net.ParseIP(e.owner.Address)})
 	if err != nil {
-		return fmt.Errorf("route to %s: %w", address, err)
+		return 0, fmt.Errorf("route to %s: %w", address, err)
 	}
 	for _, route := range routes {
-		if route.Type == unix.RTN_LOCAL {
-			return nil
-		}
-		if route.Type != unix.RTN_UNICAST {
+		if route.Type != unix.RTN_UNICAST && route.Type != unix.RTN_LOCAL {
 			continue
 		}
 		link, err := netlink.LinkByIndex(route.LinkIndex)
 		if err != nil {
-			return err
+			return 0, err
 		}
-		if e.interfaces[route.LinkIndex] == link.Attrs().Name {
-			return nil
+		mtu := int(e.mtu)
+		if link.Attrs().MTU <= 0 {
+			return 0, fmt.Errorf("invalid egress MTU")
 		}
-		if err := withRegistry(func(r *registry, path string) error { return acquireForwarding(r, path, e.token, link) }); err != nil {
-			return err
+		if link.Attrs().MTU < mtu {
+			mtu = link.Attrs().MTU
 		}
-		e.interfaces[route.LinkIndex] = link.Attrs().Name
-		return nil
+		if route.MTU > 0 && route.MTU < mtu {
+			mtu = route.MTU
+		}
+		// Linux's explicit advertised-MSS metric is another conservative bound.
+		overhead := 40
+		if ip.To4() == nil {
+			overhead = 60
+		}
+		if route.AdvMSS > 0 && route.AdvMSS+overhead < mtu {
+			mtu = route.AdvMSS + overhead
+		}
+		if route.Type != unix.RTN_LOCAL && e.interfaces[route.LinkIndex] != link.Attrs().Name {
+			if ip.To4() != nil {
+				if err := withRegistry(func(r *registry, path string) error { return acquireForwarding(r, path, e.token, link) }); err != nil {
+					return 0, err
+				}
+			}
+			e.interfaces[route.LinkIndex] = link.Attrs().Name
+		}
+		return uint32(mtu), nil
 	}
-	return fmt.Errorf("no usable IPv4 route to %s", address)
+	return 0, fmt.Errorf("no usable IP route to %s", address)
 }
 
 func (e *environment) cleanup() error {

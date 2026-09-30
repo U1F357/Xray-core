@@ -49,7 +49,7 @@ func TestCanceledReplyCannotSatisfyNextRequest(t *testing.T) {
 				close(firstReceived)
 				<-releaseFirst
 			}
-			reply := message{ID: request.ID}
+			reply := message{ID: request.ID, MTU: uint32(1500 - i*220)}
 			if i == 0 {
 				reply.Error = "stale error must not leak to next request"
 			}
@@ -74,8 +74,8 @@ func TestCanceledReplyCannotSatisfyNextRequest(t *testing.T) {
 		t.Fatal("cancel did not interrupt control read")
 	}
 	close(releaseFirst)
-	if err := n.PrepareDestination(context.Background(), "192.0.2.2"); err != nil {
-		t.Fatal(err)
+	if mtu, err := n.PrepareDestinationMTU(context.Background(), "192.0.2.2"); err != nil || mtu != 1280 {
+		t.Fatalf("MTU reply = %d, error = %v", mtu, err)
 	}
 	if err := <-done; err != nil {
 		t.Fatal(err)
