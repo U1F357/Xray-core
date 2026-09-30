@@ -42,7 +42,7 @@
 
 ## 使用
 
-`fp-v0.5.0` 支持 **Linux amd64、IPv4/IPv6 指纹出站**，新增 MTU 自动适配和扩展平台预设；
+`fp-v0.5.1` 支持 **Linux amd64、IPv4/IPv6 指纹出站**，新增 MTU 自动适配和扩展平台预设；
 IPv6 使用条件与验证见 [IPv6 说明](docs/ipv6-fingerprint.zh-CN.md)。需要 root、可用的 `/dev/net/tun`、
 网络管理权限，以及内核 nftables/NAT/conntrack 支持。普通宿主 Linux 可直接运行；
 受限制容器或 VPS 可能需要宿主授予相应能力。运行时不调用 ip/nft/iptables 命令。
@@ -106,7 +106,7 @@ TCP fingerprint freedom: mode=auto detected=unknown selected=linux fallback=true
 
 ## Docker 镜像
 
-提供 `ghcr.io/u1f357/xrui:fp-v0.5.0` 和 `latest`（Linux amd64），内置经校验的 geoip/geosite 数据。
+提供 `ghcr.io/u1f357/xrui:fp-v0.5.1` 和 `latest`（Linux amd64），内置经校验的 geoip/geosite 数据。
 配置目录为 `/usr/local/etc/xrui/`；Release 同时附带可通过 `docker load` 导入的镜像包。
 启用指纹出口需要额外的 TUN、NET_ADMIN 和容器内转发设置，详见 [Docker 使用说明](docs/docker.zh-CN.md)。
 
@@ -144,4 +144,4 @@ bash scripts/build-fingerprint-release.sh
 
 ECN/AccECN 固定模式、入口自动识别和 VLESS 传递：见 [TCP ECN 使用说明](docs/tcp-ecn.zh-CN.md)。此扩展从 fp-v0.4.0 起提供。
 
-fp-v0.5.0 新增可配置随机 TCP 握手延迟：见 [配置与边界](docs/tcp-handshake-delay.zh-CN.md)。默认关闭，仅作用于指纹出口。
+fp-v0.5.1 新增可配置随机 TCP 握手延迟：见 [配置与边界](docs/tcp-handshake-delay.zh-CN.md)。默认关闭，仅作用于指纹出口。

@@ -175,5 +175,9 @@ finally:
    p.terminate()
    try:p.wait(timeout=15)
    except subprocess.TimeoutExpired:p.kill();p.wait()
+ # The disposable root-owned TLS key is not test evidence and cannot be
+ # opened by the unprivileged Actions artifact uploader.
+ if DELAY:
+  for name in ('key.pem','cert.pem'):(OUT/name).unlink(missing_ok=True)
  for f in logs:f.close()
  for ns in reversed(spaces):subprocess.run(['ip','netns','del',ns],check=False)

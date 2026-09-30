@@ -1,6 +1,6 @@
 本 fork 的全部自定义修改、测试、文档和发布流程完全由 AI（OpenAI Codex）实现。上游 Xray-core、gVisor、基础镜像及地理数据由各自作者开发；本项目不是 XTLS 官方发行版。
 
-## fp-v0.5.0
+## fp-v0.5.1
 
 - freedom 新增 `tcpHandshakeDelay: {"minMs": 80, "maxMs": 120}`，默认关闭，要求使用 `tcpFingerprint`。每次连接均匀抽取闭区间内整数毫秒，支持固定值及 0，最大 10000 ms。
 - 收到目标 SYN-ACK 后按连接异步暂存，到期交给 gVisor，再正常发送第三次握手 ACK 和应用数据；不在共享读包循环中睡眠。
@@ -14,7 +14,7 @@
 ## 使用与镜像
 
 自动跟随入口需在 freedom 中同时配置 `tcpFingerprint: "auto"` 和 `tcpECN: "auto"`。入口/中转策略及固定模式见 `docs/tcp-ecn.zh-CN.md`。
-Linux amd64 镜像：`ghcr.io/u1f357/xrui:fp-v0.5.0`，同时更新 `latest`。
+Linux amd64 镜像：`ghcr.io/u1f357/xrui:fp-v0.5.1`，同时更新 `latest`。
 配置目录：`/usr/local/etc/xrui/`；镜像及普通压缩包内置固定版本、经校验的 geoip/geosite。
 指纹出口仍需 NET_ADMIN、TUN 和转发能力；IPv6 还需实际可用的 IPv6 网络。
 

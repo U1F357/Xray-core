@@ -321,4 +321,4 @@ IPv6 自动模式使用独立 ULA /126 和 NAT66，仅首次连接时创建；�
 
 ECN/AccECN 固定模式、入口自动识别和 VLESS 传递：见 [TCP ECN 使用说明](docs/tcp-ecn.zh-CN.md)。此扩展从 fp-v0.4.0 起提供。
 
-fp-v0.5.0 新增可配置随机 TCP 握手延迟：见 [配置与边界](docs/tcp-handshake-delay.zh-CN.md)。默认关闭，仅作用于指纹出口。
+fp-v0.5.1 新增可配置随机 TCP 握手延迟：见 [配置与边界](docs/tcp-handshake-delay.zh-CN.md)。默认关闭，仅作用于指纹出口。
