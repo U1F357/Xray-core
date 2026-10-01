@@ -31,6 +31,14 @@ func ValidateTCPFingerprint(c *Config) error {
 		if c.TcpFingerprint == "" {
 			return fmt.Errorf("tcpAckDelay requires tcpFingerprint")
 		}
+		if r := a.AutoRtt; r != nil {
+			if a.MinMs != 0 || a.MaxMs != 0 || r.MinMs > r.MaxMs || r.MaxMs > 1000 || r.FallbackMs < r.MinMs || r.FallbackMs > r.MaxMs {
+				return fmt.Errorf("tcpAckDelay autoRTT requires 0 <= minMs <= fallbackMs <= maxMs <= 1000 and no manual range")
+			}
+		}
+		if a.Continuous && a.WindowMs != 0 {
+			return fmt.Errorf("tcpAckDelay continuous requires omitted/zero windowMs")
+		}
 		if a.MinMs > a.MaxMs || a.MaxMs > 1000 || a.WindowMs > 60000 {
 			return fmt.Errorf("tcpAckDelay requires 0 <= minMs <= maxMs <= 1000 and windowMs <= 60000 (0 means 10000)")
 		}

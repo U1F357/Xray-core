@@ -60,10 +60,12 @@ func getTProxyType(s *internet.MemoryStreamConfig) internet.SocketConfig_TProxyM
 
 func (w *tcpWorker) callback(conn stat.Connection) {
 	profile, ecn := "", ""
+	var rtt uint32
 	captureEnabled := false
 	if captured, ok := conn.(*internet.FingerprintedConn); ok {
 		captureEnabled = true
 		profile, ecn = captured.Profile, captured.ECN
+		rtt = captured.RTTUs
 		conn = captured.Conn
 	}
 	ctx, cancel := context.WithCancel(w.ctx)
@@ -126,7 +128,14 @@ func (w *tcpWorker) callback(conn stat.Connection) {
 			WriteCounter: w.downlinkCounter,
 		}
 	}
+	rttSource := ""
+	if p := session.TCPFingerprintPolicyFromContext(ctx); p != nil && p.RTT {
+		rttSource = "tcp_info"
+		errors.LogInfo(ctx, "TCP RTT inbound: rttUs=", rtt, " source=tcp_info peer=", conn.RemoteAddr())
+	}
 	ctx = session.ContextWithInbound(ctx, &session.Inbound{
+		TCPRTTUs:             rtt,
+		TCPRTTSource:         rttSource,
 		TCPFingerprint:       profile,
 		TCPECN:               ecn,
 		TCPECNSource:         "syn",
@@ -155,6 +164,7 @@ func (w *tcpWorker) Proxy() proxy.Inbound {
 
 func (w *tcpWorker) Start() error {
 	ctx := internet.ContextWithTCPFingerprintCapture(context.Background(), internet.TCPFingerprintCaptureRequested(w.ctx))
+	ctx = internet.ContextWithTCPRTTCapture(ctx, internet.TCPRTTCaptureRequested(w.ctx))
 
 	if v, ok := w.proxy.(*hysteria_proxy.Server); ok {
 		ctx = hysteria.ContextWithValidator(ctx, v.HysteriaInboundValidator())

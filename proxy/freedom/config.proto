@@ -84,9 +84,18 @@ message TCPHandshakeDelay {
   uint32 max_ms = 2 [json_name = "maxMs"];
 }
 
-// Per-packet outgoing ACK delay during the initial connection window.
+// Minimum age of received peer bytes before acknowledging them.
 message TCPAckDelay {
   uint32 min_ms = 1;
   uint32 max_ms = 2;
-  uint32 window_ms = 3; // Zero means 10000 ms.
+  uint32 window_ms = 3; // Zero means 10000 ms in bounded mode.
+  TCPAutoRTT auto_rtt = 5;
+  bool continuous = 4; // Whole connection; window_ms must be zero.
+}
+
+// Optional initial ingress RTT estimate. No live feedback is required from clients.
+message TCPAutoRTT {
+  uint32 fallback_ms = 1;
+  uint32 min_ms = 2;
+  uint32 max_ms = 3;
 }

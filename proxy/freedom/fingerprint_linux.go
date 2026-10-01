@@ -113,13 +113,18 @@ func newFingerprintDialerFamily(c *Config, is6 bool) (fingerprintDialer, error) 
 	})
 	lifetime, cancel := context.WithCancel(context.Background())
 	d := &tunFingerprintDialer{ecnMode: c.TcpEcn, profile: c.TcpFingerprint, stack: s, file: file, link: link, ctx: lifetime, cancel: cancel, automatic: automatic, mtu: mtu, headers: newFingerprintIPHeaders(c.TcpFingerprint)}
-	if c.TcpHandshakeDelay != nil && c.TcpHandshakeDelay.MaxMs != 0 && (c.TcpAckDelay == nil || c.TcpAckDelay.MaxMs == 0) {
+	if c.TcpHandshakeDelay != nil && c.TcpHandshakeDelay.MaxMs != 0 && (c.TcpAckDelay == nil || (c.TcpAckDelay.MaxMs == 0 && c.TcpAckDelay.AutoRtt == nil)) {
 		d.delayRange = c.TcpHandshakeDelay
 		d.handshakeDelay = &synACKDelayer{pending: make(map[synACKFlow]*delayedSYNACK), inject: d.injectPacket}
 	}
-	if c.TcpAckDelay != nil && c.TcpAckDelay.MaxMs != 0 {
+	if c.TcpAckDelay != nil && (c.TcpAckDelay.MaxMs != 0 || c.TcpAckDelay.AutoRtt != nil) {
 		d.ackDelay = newACKDelayer(lifetime, c.TcpAckDelay, d.writePacket, func(message string) { xerrors.LogWarning(lifetime, message) })
-		xerrors.LogInfo(lifetime, "TCP ACK delay: minMs=", c.TcpAckDelay.MinMs, " maxMs=", c.TcpAckDelay.MaxMs, " windowMs=", d.ackDelay.cfg.WindowMs, " includesHandshake=true replacesSYNACKDelay=true")
+		d.delayRange = &TCPHandshakeDelay{MinMs: c.TcpAckDelay.MinMs, MaxMs: c.TcpAckDelay.MaxMs}
+		if c.TcpAckDelay.AutoRtt != nil {
+			d.delayRange.MaxMs = c.TcpAckDelay.AutoRtt.MaxMs
+		}
+		d.handshakeDelay = &synACKDelayer{pending: make(map[synACKFlow]*delayedSYNACK), inject: d.injectPacket, deadlineFor: d.ackDelay.synACKDeadline}
+		xerrors.LogInfo(lifetime, "TCP ACK delay: minMs=", c.TcpAckDelay.MinMs, " maxMs=", c.TcpAckDelay.MaxMs, " windowMs=", d.ackDelay.cfg.WindowMs, " continuous=", c.TcpAckDelay.Continuous, " autoRTT=", c.TcpAckDelay.AutoRtt != nil, " includesHandshake=true mode=minimumAcknowledgmentAge")
 	}
 	ok := false
 	defer func() {
@@ -178,6 +183,9 @@ func (d *tunFingerprintDialer) readPackets() {
 		}
 		if n == 0 {
 			continue
+		}
+		if d.ackDelay != nil {
+			d.ackDelay.observe(data[:n])
 		}
 		if d.handshakeDelay != nil && d.handshakeDelay.enqueue(data[:n]) {
 			continue
@@ -375,15 +383,37 @@ func (d *tunFingerprintDialer) dialWithMTU(ctx context.Context, address tcpip.Fu
 		return nil, fmt.Errorf("fingerprint ECN: %s", err)
 	}
 	xerrors.LogInfo(ctx, "TCP ECN freedom: selected=", mode, " source=", source, " fallback=", fallback, " profile=", d.profile)
+	var autoDelay time.Duration
+	autoRTT := d.ackDelay != nil && d.ackDelay.cfg.AutoRtt != nil
+	if autoRTT {
+		var source string
+		var observed uint32
+		autoDelay, source, observed = selectTCPRTT(ctx, d.ackDelay.cfg.AutoRtt)
+		xerrors.LogInfo(ctx, "TCP ACK timing selection: mode=autoRTT source=", source, " observedUs=", observed, " selectedMs=", autoDelay.Milliseconds())
+	}
 	// Keep SYN-ACK dispatch behind registration, including loopback-fast replies.
 	if d.handshakeDelay != nil {
 		d.handshakeDelay.mu.Lock()
+	}
+	// Block the packet pump until this connection's immutable RTT is registered.
+	// Connect only queues packets to channel.Endpoint and does not wait for the pump.
+	if autoRTT {
+		d.ackDelay.mu.Lock()
 	}
 	d.routeMu.Lock()
 	d.stack.SetRouteTable([]tcpip.Route{{Destination: d.subnet, NIC: 1, MTU: mtu}})
 	err = ep.Connect(address)
 	d.stack.SetRouteTable([]tcpip.Route{{Destination: d.subnet, NIC: 1}})
 	d.routeMu.Unlock()
+	if autoRTT {
+		local, e := ep.GetLocalAddress()
+		if _, pending := err.(*tcpip.ErrConnectStarted); pending && e == nil {
+			key := synACKFlow{local: local.Addr, remote: address.Addr, localPort: local.Port, remotePort: address.Port}
+			d.ackDelay.pending[key] = &autoDelay
+			defer func() { d.ackDelay.mu.Lock(); delete(d.ackDelay.pending, key); d.ackDelay.mu.Unlock() }()
+		}
+		d.ackDelay.mu.Unlock()
+	}
 	if d.handshakeDelay != nil {
 		if _, pending := err.(*tcpip.ErrConnectStarted); pending {
 			local, localErr := ep.GetLocalAddress()
@@ -391,11 +421,16 @@ func (d *tunFingerprintDialer) dialWithMTU(ctx context.Context, address tcpip.Fu
 				d.handshakeDelay.mu.Unlock()
 				return nil, fmt.Errorf("fingerprint handshake delay local address: %s", localErr)
 			}
-			delay := randomHandshakeDelay(d.delayRange)
+			delay := time.Duration(d.delayRange.MaxMs) * time.Millisecond
+			if d.ackDelay == nil {
+				delay = randomHandshakeDelay(d.delayRange)
+			}
 			key := synACKFlow{local: local.Addr, remote: address.Addr, localPort: local.Port, remotePort: address.Port}
 			stop := d.handshakeDelay.registerLocked(ctx, key, delay)
 			defer stop() // Stop delivery before the endpoint can close or reuse its port.
-			xerrors.LogInfo(ctx, "TCP handshake delay: selectedMs=", delay.Milliseconds(), " target=", address.Addr, ":", address.Port)
+			if d.ackDelay == nil {
+				xerrors.LogInfo(ctx, "TCP handshake delay: selectedMs=", delay.Milliseconds(), " target=", address.Addr, ":", address.Port)
+			}
 		}
 		d.handshakeDelay.mu.Unlock()
 	}
@@ -410,6 +445,38 @@ func (d *tunFingerprintDialer) dialWithMTU(ctx context.Context, address tcpip.Fu
 	if err != nil {
 		return nil, fmt.Errorf("fingerprint connect: %s", err)
 	}
+	if d.ackDelay != nil {
+		info := tcpip.TCPInfoOption{}
+		if e := ep.GetSockOpt(&info); e == nil {
+			xerrors.LogInfo(ctx, "TCP ACK timing connected: stackRTT=", info.RTT, " stackRTO=", info.RTO, " continuous=", d.ackDelay.cfg.Continuous)
+		}
+	}
 	success = true
-	return gonet.NewTCPConn(&wq, ep), nil
+	conn := gonet.NewTCPConn(&wq, ep)
+	if d.ackDelay != nil && d.ackDelay.cfg.Continuous {
+		local, e := ep.GetLocalAddress()
+		if e != nil {
+			conn.Close()
+			return nil, fmt.Errorf("ACK timing local address: %s", e)
+		}
+		key := synACKFlow{local: local.Addr, remote: address.Addr, localPort: local.Port, remotePort: address.Port}
+		d.ackDelay.mu.Lock()
+		owner := d.ackDelay.flows[key]
+		d.ackDelay.mu.Unlock()
+		return &ackAgeConn{TCPConn: conn, closed: func() { d.ackDelay.closeFlow(key, owner) }}, nil
+	}
+	return conn, nil
+}
+
+// Keep gonet's half-close methods; a full Close bounds continuous timing state.
+type ackAgeConn struct {
+	*gonet.TCPConn
+	once   sync.Once
+	closed func()
+}
+
+func (c *ackAgeConn) Close() error {
+	err := c.TCPConn.Close()
+	c.once.Do(c.closed)
+	return err
 }

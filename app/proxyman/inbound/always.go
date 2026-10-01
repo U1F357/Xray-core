@@ -57,7 +57,8 @@ func NewAlwaysOnInboundHandler(ctx context.Context, tag string, receiverConfig *
 		if err := proxyman.ValidateTCPFingerprintPolicy(p); err != nil {
 			return nil, err
 		}
-		ctx = session.ContextWithTCPFingerprintPolicy(ctx, &session.TCPFingerprintPolicy{Source: p.Source, TrustedUsers: append([]string(nil), p.TrustedUsers...), OnMissing: p.OnMissing})
+		ctx = session.ContextWithTCPFingerprintPolicy(ctx, &session.TCPFingerprintPolicy{RTT: p.Rtt, Source: p.Source, TrustedUsers: append([]string(nil), p.TrustedUsers...), OnMissing: p.OnMissing})
+		ctx = internet.ContextWithTCPRTTCapture(ctx, p.Rtt && (p.Source == "syn" || (p.Source == "vless" && p.OnMissing == "syn")))
 		ctx = internet.ContextWithTCPFingerprintCapture(ctx, p.Source == "syn" || (p.Source == "vless" && p.OnMissing == "syn"))
 	}
 

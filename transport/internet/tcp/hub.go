@@ -19,6 +19,7 @@ import (
 // Listener is an internet.Listener that listens for TCP connections.
 type Listener struct {
 	listener           net.Listener
+	captureRTT         bool
 	captureFingerprint bool
 	tlsConfig          *gotls.Config
 	realityConfig      *goreality.Config
@@ -43,6 +44,7 @@ func ListenTCP(ctx context.Context, address net.Address, port net.Port, streamSe
 	l.captureFingerprint = internet.TCPFingerprintCaptureRequested(ctx) && port != 0 &&
 		!(streamSettings.SocketSettings != nil && streamSettings.SocketSettings.AcceptProxyProtocol) &&
 		!(streamSettings.FinalMask != nil && streamSettings.FinalMask.HasMasks())
+	l.captureRTT = l.captureFingerprint && internet.TCPRTTCaptureRequested(ctx)
 	if l.captureFingerprint {
 		ctx = internet.ContextWithActiveTCPFingerprintCapture(ctx)
 	}
@@ -110,6 +112,10 @@ func (v *Listener) keepAccepting() {
 		}
 
 		profile, ecn := "", ""
+		var rtt uint32
+		if v.captureRTT {
+			rtt = internet.ReadInitialTCPRTT(conn)
+		}
 		if v.captureFingerprint {
 			profile, ecn = internet.ReadTCPFingerprintMetadata(conn)
 		}
@@ -126,7 +132,7 @@ func (v *Listener) keepAccepting() {
 				conn = v.authConfig.Server(conn)
 			}
 			if v.captureFingerprint {
-				v.addConn(&internet.FingerprintedConn{Conn: stat.Connection(conn), Profile: profile, ECN: ecn})
+				v.addConn(&internet.FingerprintedConn{Conn: stat.Connection(conn), Profile: profile, ECN: ecn, RTTUs: rtt})
 			} else {
 				v.addConn(stat.Connection(conn))
 			}

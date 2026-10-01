@@ -29,6 +29,7 @@ type Addons struct {
 	TcpFingerprint []byte `protobuf:"bytes,65001,opt,name=tcp_fingerprint,json=tcpFingerprint,proto3" json:"tcp_fingerprint,omitempty"`
 	// Independent extension so older fingerprint-aware peers retain the OS category.
 	TcpEcn        []byte `protobuf:"bytes,65002,opt,name=tcp_ecn,json=tcpEcn,proto3" json:"tcp_ecn,omitempty"`
+	TcpRtt        []byte `protobuf:"bytes,65003,opt,name=tcp_rtt,json=tcpRtt,proto3" json:"tcp_rtt,omitempty"` // Initial ingress RTT in a private versioned envelope.
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -91,16 +92,24 @@ func (x *Addons) GetTcpEcn() []byte {
 	return nil
 }
 
+func (x *Addons) GetTcpRtt() []byte {
+	if x != nil {
+		return x.TcpRtt
+	}
+	return nil
+}
+
 var File_proxy_vless_encoding_addons_proto protoreflect.FileDescriptor
 
 const file_proxy_vless_encoding_addons_proto_rawDesc = "" +
 	"\n" +
-	"!proxy/vless/encoding/addons.proto\x12\x19xray.proxy.vless.encoding\"v\n" +
+	"!proxy/vless/encoding/addons.proto\x12\x19xray.proxy.vless.encoding\"\x91\x01\n" +
 	"\x06Addons\x12\x12\n" +
 	"\x04Flow\x18\x01 \x01(\tR\x04Flow\x12\x12\n" +
 	"\x04Seed\x18\x02 \x01(\fR\x04Seed\x12)\n" +
 	"\x0ftcp_fingerprint\x18\xe9\xfb\x03 \x01(\fR\x0etcpFingerprint\x12\x19\n" +
-	"\atcp_ecn\x18\xea\xfb\x03 \x01(\fR\x06tcpEcnBm\n" +
+	"\atcp_ecn\x18\xea\xfb\x03 \x01(\fR\x06tcpEcn\x12\x19\n" +
+	"\atcp_rtt\x18\xeb\xfb\x03 \x01(\fR\x06tcpRttBm\n" +
 	"\x1dcom.xray.proxy.vless.encodingP\x01Z.github.com/xtls/xray-core/proxy/vless/encoding\xaa\x02\x19Xray.Proxy.Vless.Encodingb\x06proto3"
 
 var (

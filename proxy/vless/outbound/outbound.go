@@ -262,6 +262,10 @@ func (h *Handler) Process(ctx context.Context, link *transport.Link, dialer inte
 				mode = in.TCPECN
 			}
 			requestAddons.TcpEcn = encoding.EncodeTCPECN(mode)
+			if in := session.InboundFromContext(ctx); in != nil && in.TCPRTTSource != "" {
+				requestAddons.TcpRtt = encoding.EncodeTCPRTT(in.TCPRTTUs)
+				errors.LogInfo(ctx, "TCP RTT VLESS outbound: rttUs=", in.TCPRTTUs, " source=", in.TCPRTTSource)
+			}
 			errors.LogInfo(ctx, "TCP fingerprint VLESS outbound: category=", encoding.TCPFingerprintLabel(profile), " ecn=", encoding.TCPFingerprintLabel(mode), " forwarding=true")
 		}
 	}

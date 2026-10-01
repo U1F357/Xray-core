@@ -16,7 +16,7 @@ import (
 func TestFingerprintVLESSWireCompatibility(t *testing.T) {
 	for _, flow := range []string{"", vless.XRV} {
 		for _, profile := range []string{"", "windows", "macos", "linux"} {
-			a := &Addons{Flow: flow, TcpFingerprint: EncodeTCPFingerprint(profile)}
+			a := &Addons{Flow: flow, TcpFingerprint: EncodeTCPFingerprint(profile), TcpRtt: EncodeTCPRTT(100000)}
 			b := buf.New()
 			if err := EncodeHeaderAddons(b, a); err != nil {
 				t.Fatal(err)

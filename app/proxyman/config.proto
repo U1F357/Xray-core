@@ -80,4 +80,5 @@ message TCPFingerprintConfig {
  string source = 1;
  repeated string trusted_users = 2;
  string on_missing = 3;
+ bool rtt = 4;
 }

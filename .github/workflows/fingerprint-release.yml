@@ -52,6 +52,12 @@ jobs:
           sudo python3 testing/fingerprint/ecn_chain_e2e.py "$PWD/dist/xrui" --ipv6 --handshake-delay
           sudo python3 testing/fingerprint/ecn_chain_e2e.py "$PWD/dist/xrui" --ack-delay
           sudo python3 testing/fingerprint/ecn_chain_e2e.py "$PWD/dist/xrui" --ipv6 --ack-delay
+          sudo python3 testing/fingerprint/ecn_chain_e2e.py "$PWD/dist/xrui" --ack-age
+          sudo python3 testing/fingerprint/ecn_chain_e2e.py "$PWD/dist/xrui" --ipv6 --ack-age
+          sudo python3 testing/fingerprint/ecn_chain_e2e.py "$PWD/dist/xrui" --ack-age --continuous --vision
+          sudo python3 testing/fingerprint/ecn_chain_e2e.py "$PWD/dist/xrui" --ipv6 --ack-age --continuous --vision
+          sudo python3 testing/fingerprint/ecn_chain_e2e.py "$PWD/dist/xrui" --auto-rtt --continuous --vision
+          sudo python3 testing/fingerprint/ecn_chain_e2e.py "$PWD/dist/xrui" --ipv6 --auto-rtt --continuous --vision
       - name: Save packet capture reports
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

@@ -32,7 +32,7 @@ def inbound(p,mode,custom):
  account={'id':UUID,'email':'relay@test'}
  if mode=='vision':account['flow']='xtls-rprx-vision'
  i={'listen':'127.0.0.1','port':p,'protocol':'vless','settings':{'clients':[account],'decryption':'none'},'streamSettings':{'network':'tcp'}}
- if custom:i['tcpFingerprint']={'source':'vless','trustedUsers':['relay@test']}
+ if custom:i['tcpFingerprint']={'source':'vless','trustedUsers':['relay@test'],'rtt':True}
  if mode!='plain':i['streamSettings'].update({'security':'tls','tlsSettings':{'certificates':[{'certificateFile':str(OUT/'cert.pem'),'keyFile':str(OUT/'key.pem')}]}})
  return i
 def outbound(p,mode,custom):
@@ -56,13 +56,14 @@ try:
     destination=port()
     start(CUSTOM,name+'-relay',{'log':{'loglevel':'info'},'inbounds':[inbound(destination,mode,True)],'outbounds':[outbound(server_port,mode,True)]})
    socks={'listen':'127.0.0.1','port':socks_port,'protocol':'socks','settings':{'auth':'noauth'}}
-   if client_custom:socks['tcpFingerprint']={'source':'syn'}
+   if client_custom:socks['tcpFingerprint']={'source':'syn','rtt':True}
    start(CUSTOM if client_custom else STOCK,name+'-client',{'log':{'loglevel':'info'},'inbounds':[socks],'outbounds':[outbound(destination,mode,client_custom)]})
    body=subprocess.check_output(['curl','--noproxy','','--socks5-hostname',f'127.0.0.1:{socks_port}','-fsS','--max-time','15',f'http://127.0.0.1:{http.server_address[1]}/'])
    assert body==bytes(range(256))*1024
    if server_custom:
     expected='status=accepted source=vless category=linux' if client_custom else 'status=missing source=unknown category=unknown'
     assert expected in (OUT/(name+'-server.log')).read_text(),name
+    assert ('rtt_source=vless' if client_custom else 'rtt_source=unknown') in (OUT/(name+'-server.log')).read_text(),name
    report.append(name);print(name+' PASS',flush=True)
  (OUT/'verification.json').write_text(json.dumps({'passed':report,'stock_binary':STOCK,'scope':'plain, TLS, Vision TLS; no REALITY handshake coverage'},indent=2)+'\n')
 finally:

@@ -9,6 +9,9 @@ func ValidateTCPFingerprintPolicy(p *TCPFingerprintConfig) error {
 	if p == nil {
 		return nil
 	}
+	if p.Source == "off" && p.Rtt {
+		return fmt.Errorf("tcpFingerprint rtt requires source syn or vless")
+	}
 	switch p.Source {
 	case "syn", "off":
 		if len(p.TrustedUsers) != 0 || p.OnMissing != "" {

@@ -127,6 +127,7 @@ func (m *MuxConfig) Build() (*proxyman.MultiplexingConfig, error) {
 }
 
 type TCPFingerprintInboundConfig struct {
+	RTT          bool     `json:"rtt"`
 	Source       string   `json:"source"`
 	TrustedUsers []string `json:"trustedUsers"`
 	OnMissing    string   `json:"onMissing"`
@@ -148,7 +149,7 @@ func (c *InboundDetourConfig) Build() (*core.InboundHandlerConfig, error) {
 	receiverSettings := &proxyman.ReceiverConfig{}
 	if c.TCPFingerprint != nil {
 		fp := c.TCPFingerprint
-		receiverSettings.TcpFingerprint = &proxyman.TCPFingerprintConfig{Source: fp.Source, TrustedUsers: fp.TrustedUsers, OnMissing: fp.OnMissing}
+		receiverSettings.TcpFingerprint = &proxyman.TCPFingerprintConfig{Rtt: fp.RTT, Source: fp.Source, TrustedUsers: fp.TrustedUsers, OnMissing: fp.OnMissing}
 		if err := proxyman.ValidateTCPFingerprintPolicy(receiverSettings.TcpFingerprint); err != nil {
 			return nil, err
 		}

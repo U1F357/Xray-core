@@ -15,9 +15,18 @@ const ackDelayTotalPackets = 16384
 const ackDelayMaxFlows = 16384
 
 type ackDelayFlow struct {
+	fixedDelay        *time.Duration
+	probeUntil        time.Time
+	probeACK          int64
+	receiptLimited    bool
+	localClosed       bool
 	isn               uint32
 	end, last, expiry time.Time
 	bytes             int
+	peerKnown         bool
+	confirmed         int64
+	receipts          []ackReceipt
+	overflowUntil     time.Time
 }
 type ackDelayPacket struct {
 	flow   *ackDelayFlow
@@ -50,26 +59,28 @@ func (h *ackDelayHeap) Pop() any {
 // All sends pass through mu so immediate packets cannot overtake queued packets
 // from the same connection at a deadline boundary.
 type ackDelayer struct {
-	mu     sync.Mutex
-	ctx    context.Context
-	cfg    TCPAckDelay
-	flows  map[synACKFlow]*ackDelayFlow
-	queue  ackDelayHeap
-	bytes  int
-	serial uint64
-	wake   chan struct{}
-	send   func([]byte)
-	sample func() time.Duration
-	log    func(string)
-	drops  uint64
+	mu       sync.Mutex
+	ctx      context.Context
+	cfg      TCPAckDelay
+	flows    map[synACKFlow]*ackDelayFlow
+	pending  map[synACKFlow]*time.Duration
+	queue    ackDelayHeap
+	bytes    int
+	serial   uint64
+	wake     chan struct{}
+	send     func([]byte)
+	sample   func() time.Duration
+	log      func(string)
+	drops    uint64
+	receipts int
 }
 
 func newACKDelayer(ctx context.Context, c *TCPAckDelay, send func([]byte), log func(string)) *ackDelayer {
-	cfg := TCPAckDelay{MinMs: c.MinMs, MaxMs: c.MaxMs, WindowMs: c.WindowMs}
-	if cfg.WindowMs == 0 {
+	cfg := TCPAckDelay{MinMs: c.MinMs, MaxMs: c.MaxMs, WindowMs: c.WindowMs, Continuous: c.Continuous, AutoRtt: c.AutoRtt}
+	if cfg.WindowMs == 0 && !cfg.Continuous {
 		cfg.WindowMs = 10000
 	}
-	d := &ackDelayer{ctx: ctx, cfg: cfg, flows: make(map[synACKFlow]*ackDelayFlow), wake: make(chan struct{}, 1), send: send, log: log}
+	d := &ackDelayer{ctx: ctx, cfg: cfg, flows: make(map[synACKFlow]*ackDelayFlow), pending: make(map[synACKFlow]*time.Duration), wake: make(chan struct{}, 1), send: send, log: log}
 	d.sample = func() time.Duration {
 		return time.Duration(uint64(cfg.MinMs)+rand.Uint64N(uint64(cfg.MaxMs-cfg.MinMs)+1)) * time.Millisecond
 	}
@@ -108,7 +119,7 @@ func (d *ackDelayer) submit(p []byte) {
 	f := d.flows[key]
 	if flags&4 != 0 { // Reset terminates the connection, including pending data.
 		if f != nil {
-			delete(d.flows, key)
+			d.forget(key, f)
 			d.purge(key, f)
 		}
 		d.send(p)
@@ -119,7 +130,7 @@ func (d *ackDelayer) submit(p []byte) {
 		isn := binary.BigEndian.Uint32(h[4:8])
 		if f == nil || f.isn != isn {
 			if f != nil {
-				delete(d.flows, key)
+				d.forget(key, f)
 				d.purge(key, f)
 			}
 			if len(d.flows) >= ackDelayMaxFlows {
@@ -127,7 +138,7 @@ func (d *ackDelayer) submit(p []byte) {
 				return
 			}
 			// A SYN that never completes cannot leave permanent state behind.
-			d.flows[key] = &ackDelayFlow{isn: isn, expiry: now.Add(30 * time.Second)}
+			d.flows[key] = &ackDelayFlow{fixedDelay: d.pending[key], isn: isn, expiry: now.Add(30 * time.Second)}
 		}
 		d.send(p)
 		d.signal()
@@ -141,10 +152,10 @@ func (d *ackDelayer) submit(p []byte) {
 	if flags&0x10 != 0 {
 		if f.end.IsZero() {
 			f.end = now.Add(time.Duration(d.cfg.WindowMs) * time.Millisecond)
-			f.expiry = f.end.Add(time.Duration(d.cfg.MaxMs) * time.Millisecond)
+			f.expiry = f.end.Add(d.maxDelay(f))
 		}
-		if now.Before(f.end) {
-			due = now.Add(d.sample())
+		if d.cfg.Continuous || now.Before(f.end) {
+			due = d.ackDeadline(f, h, now)
 		}
 	}
 	// Random delays do not reorder packets or accumulate one delay per queued
@@ -152,7 +163,8 @@ func (d *ackDelayer) submit(p []byte) {
 	if due.Before(f.last) {
 		due = f.last
 	}
-	if !due.After(now) {
+	if !due.After(now) && f.bytes == 0 {
+		d.confirm(f, h)
 		d.send(p)
 		return
 	}
@@ -188,7 +200,14 @@ func (d *ackDelayer) run() {
 	nextSweep := time.Now()
 	timer := time.NewTimer(time.Hour)
 	defer timer.Stop()
-	defer func() { d.mu.Lock(); clear(d.flows); d.queue = nil; d.bytes = 0; d.mu.Unlock() }()
+	defer func() {
+		d.mu.Lock()
+		clear(d.flows)
+		d.queue = nil
+		d.bytes = 0
+		d.receipts = 0
+		d.mu.Unlock()
+	}()
 	for {
 		d.mu.Lock()
 		if d.ctx.Err() != nil {
@@ -201,6 +220,8 @@ func (d *ackDelayer) run() {
 			d.bytes -= len(p.data)
 			p.flow.bytes -= len(p.data)
 			if d.flows[p.key] == p.flow {
+				_, h := tcpDelayTuple(p.data)
+				d.confirm(p.flow, h)
 				d.send(p.data)
 			}
 			if d.ctx.Err() != nil {
@@ -211,8 +232,8 @@ func (d *ackDelayer) run() {
 		// A one-second sweep bounds idle state without per-connection goroutines.
 		if !now.Before(nextSweep) {
 			for k, f := range d.flows {
-				if f.bytes == 0 && !now.Before(f.expiry) {
-					delete(d.flows, k)
+				if f.bytes == 0 && !now.Before(f.expiry) && (!d.cfg.Continuous || f.end.IsZero() || f.localClosed) {
+					d.forget(k, f)
 				}
 			}
 			nextSweep = now.Add(time.Second)

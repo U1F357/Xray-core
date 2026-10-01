@@ -58,6 +58,7 @@ func ApplyTCPFingerprint(ctx context.Context, addons *Addons, authenticatedEmail
 	}
 	// Resolve once on the authenticated physical VLESS request before dispatch.
 	// Mux children inherit this immutable selection.
+	applyTCPRTT(in, policy, addons, authenticatedEmail)
 	observed, observedECN := in.TCPFingerprint, in.TCPECN
 	in.TCPECN, in.TCPECNSource = "", "unknown"
 	in.TCPFingerprint = ""
@@ -98,7 +99,7 @@ func ApplyTCPFingerprint(ctx context.Context, addons *Addons, authenticatedEmail
 			}
 		}
 	}
-	errors.LogInfo(ctx, "TCP fingerprint VLESS inbound: status=", status, " source=", in.TCPFingerprintSource, " category=", TCPFingerprintLabel(in.TCPFingerprint), " ecn_status=", ecnStatus, " ecn=", TCPFingerprintLabel(in.TCPECN), " ecn_source=", in.TCPECNSource, " user=", authenticatedEmail)
+	errors.LogInfo(ctx, "TCP fingerprint VLESS inbound: status=", status, " source=", in.TCPFingerprintSource, " category=", TCPFingerprintLabel(in.TCPFingerprint), " ecn_status=", ecnStatus, " ecn=", TCPFingerprintLabel(in.TCPECN), " ecn_source=", in.TCPECNSource, " rttUs=", in.TCPRTTUs, " rtt_source=", in.TCPRTTSource, " user=", authenticatedEmail)
 }
 
 // ECN uses its own versioned extension: older custom cores can still decode the

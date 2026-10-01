@@ -12,6 +12,7 @@ import (
 // unwraps it before protocol handling so TLS, splice and syscall type checks survive.
 type FingerprintedConn struct {
 	net.Conn
+	RTTUs   uint32
 	Profile string
 	ECN     string // SYN offer: none, classic, accecn; empty means unavailable/invalid.
 }
@@ -176,5 +177,15 @@ func ContextWithActiveTCPFingerprintCapture(ctx context.Context) context.Context
 }
 func tcpFingerprintCaptureActive(ctx context.Context) bool {
 	enabled, _ := ctx.Value(fingerprintCaptureActiveKey{}).(bool)
+	return enabled
+}
+
+type tcpRTTCaptureKey struct{}
+
+func ContextWithTCPRTTCapture(ctx context.Context, enabled bool) context.Context {
+	return context.WithValue(ctx, tcpRTTCaptureKey{}, enabled)
+}
+func TCPRTTCaptureRequested(ctx context.Context) bool {
+	enabled, _ := ctx.Value(tcpRTTCaptureKey{}).(bool)
 	return enabled
 }

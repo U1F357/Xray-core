@@ -675,12 +675,14 @@ func (x *TCPHandshakeDelay) GetMaxMs() uint32 {
 	return 0
 }
 
-// Per-packet outgoing ACK delay during the initial connection window.
+// Minimum age of received peer bytes before acknowledging them.
 type TCPAckDelay struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	MinMs         uint32                 `protobuf:"varint,1,opt,name=min_ms,json=minMs,proto3" json:"min_ms,omitempty"`
 	MaxMs         uint32                 `protobuf:"varint,2,opt,name=max_ms,json=maxMs,proto3" json:"max_ms,omitempty"`
-	WindowMs      uint32                 `protobuf:"varint,3,opt,name=window_ms,json=windowMs,proto3" json:"window_ms,omitempty"` // Zero means 10000 ms.
+	WindowMs      uint32                 `protobuf:"varint,3,opt,name=window_ms,json=windowMs,proto3" json:"window_ms,omitempty"` // Zero means 10000 ms in bounded mode.
+	AutoRtt       *TCPAutoRTT            `protobuf:"bytes,5,opt,name=auto_rtt,json=autoRtt,proto3" json:"auto_rtt,omitempty"`
+	Continuous    bool                   `protobuf:"varint,4,opt,name=continuous,proto3" json:"continuous,omitempty"` // Whole connection; window_ms must be zero.
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -732,6 +734,81 @@ func (x *TCPAckDelay) GetMaxMs() uint32 {
 func (x *TCPAckDelay) GetWindowMs() uint32 {
 	if x != nil {
 		return x.WindowMs
+	}
+	return 0
+}
+
+func (x *TCPAckDelay) GetAutoRtt() *TCPAutoRTT {
+	if x != nil {
+		return x.AutoRtt
+	}
+	return nil
+}
+
+func (x *TCPAckDelay) GetContinuous() bool {
+	if x != nil {
+		return x.Continuous
+	}
+	return false
+}
+
+// Optional initial ingress RTT estimate. No live feedback is required from clients.
+type TCPAutoRTT struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	FallbackMs    uint32                 `protobuf:"varint,1,opt,name=fallback_ms,json=fallbackMs,proto3" json:"fallback_ms,omitempty"`
+	MinMs         uint32                 `protobuf:"varint,2,opt,name=min_ms,json=minMs,proto3" json:"min_ms,omitempty"`
+	MaxMs         uint32                 `protobuf:"varint,3,opt,name=max_ms,json=maxMs,proto3" json:"max_ms,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TCPAutoRTT) Reset() {
+	*x = TCPAutoRTT{}
+	mi := &file_proxy_freedom_config_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TCPAutoRTT) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TCPAutoRTT) ProtoMessage() {}
+
+func (x *TCPAutoRTT) ProtoReflect() protoreflect.Message {
+	mi := &file_proxy_freedom_config_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TCPAutoRTT.ProtoReflect.Descriptor instead.
+func (*TCPAutoRTT) Descriptor() ([]byte, []int) {
+	return file_proxy_freedom_config_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *TCPAutoRTT) GetFallbackMs() uint32 {
+	if x != nil {
+		return x.FallbackMs
+	}
+	return 0
+}
+
+func (x *TCPAutoRTT) GetMinMs() uint32 {
+	if x != nil {
+		return x.MinMs
+	}
+	return 0
+}
+
+func (x *TCPAutoRTT) GetMaxMs() uint32 {
+	if x != nil {
+		return x.MaxMs
 	}
 	return 0
 }
@@ -796,11 +873,21 @@ const file_proxy_freedom_config_proto_rawDesc = "" +
 	"\aaddress\x18\x02 \x01(\tR\aaddress\"A\n" +
 	"\x11TCPHandshakeDelay\x12\x15\n" +
 	"\x06min_ms\x18\x01 \x01(\rR\x05minMs\x12\x15\n" +
-	"\x06max_ms\x18\x02 \x01(\rR\x05maxMs\"X\n" +
+	"\x06max_ms\x18\x02 \x01(\rR\x05maxMs\"\xb3\x01\n" +
 	"\vTCPAckDelay\x12\x15\n" +
 	"\x06min_ms\x18\x01 \x01(\rR\x05minMs\x12\x15\n" +
 	"\x06max_ms\x18\x02 \x01(\rR\x05maxMs\x12\x1b\n" +
-	"\twindow_ms\x18\x03 \x01(\rR\bwindowMs*\"\n" +
+	"\twindow_ms\x18\x03 \x01(\rR\bwindowMs\x129\n" +
+	"\bauto_rtt\x18\x05 \x01(\v2\x1e.xray.proxy.freedom.TCPAutoRTTR\aautoRtt\x12\x1e\n" +
+	"\n" +
+	"continuous\x18\x04 \x01(\bR\n" +
+	"continuous\"[\n" +
+	"\n" +
+	"TCPAutoRTT\x12\x1f\n" +
+	"\vfallback_ms\x18\x01 \x01(\rR\n" +
+	"fallbackMs\x12\x15\n" +
+	"\x06min_ms\x18\x02 \x01(\rR\x05minMs\x12\x15\n" +
+	"\x06max_ms\x18\x03 \x01(\rR\x05maxMs*\"\n" +
 	"\n" +
 	"RuleAction\x12\t\n" +
 	"\x05Allow\x10\x00\x12\t\n" +
@@ -820,7 +907,7 @@ func file_proxy_freedom_config_proto_rawDescGZIP() []byte {
 }
 
 var file_proxy_freedom_config_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_proxy_freedom_config_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_proxy_freedom_config_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
 var file_proxy_freedom_config_proto_goTypes = []any{
 	(RuleAction)(0),                 // 0: xray.proxy.freedom.RuleAction
 	(*DestinationOverride)(nil),     // 1: xray.proxy.freedom.DestinationOverride
@@ -832,20 +919,21 @@ var file_proxy_freedom_config_proto_goTypes = []any{
 	(*TCPFingerprintSettings)(nil),  // 7: xray.proxy.freedom.TCPFingerprintSettings
 	(*TCPHandshakeDelay)(nil),       // 8: xray.proxy.freedom.TCPHandshakeDelay
 	(*TCPAckDelay)(nil),             // 9: xray.proxy.freedom.TCPAckDelay
-	(*protocol.ServerEndpoint)(nil), // 10: xray.common.protocol.ServerEndpoint
-	(net.Network)(0),                // 11: xray.common.net.Network
-	(*net.PortList)(nil),            // 12: xray.common.net.PortList
-	(*geodata.IPRule)(nil),          // 13: xray.common.geodata.IPRule
-	(internet.DomainStrategy)(0),    // 14: xray.transport.internet.DomainStrategy
+	(*TCPAutoRTT)(nil),              // 10: xray.proxy.freedom.TCPAutoRTT
+	(*protocol.ServerEndpoint)(nil), // 11: xray.common.protocol.ServerEndpoint
+	(net.Network)(0),                // 12: xray.common.net.Network
+	(*net.PortList)(nil),            // 13: xray.common.net.PortList
+	(*geodata.IPRule)(nil),          // 14: xray.common.geodata.IPRule
+	(internet.DomainStrategy)(0),    // 15: xray.transport.internet.DomainStrategy
 }
 var file_proxy_freedom_config_proto_depIdxs = []int32{
-	10, // 0: xray.proxy.freedom.DestinationOverride.server:type_name -> xray.common.protocol.ServerEndpoint
+	11, // 0: xray.proxy.freedom.DestinationOverride.server:type_name -> xray.common.protocol.ServerEndpoint
 	0,  // 1: xray.proxy.freedom.FinalRuleConfig.action:type_name -> xray.proxy.freedom.RuleAction
-	11, // 2: xray.proxy.freedom.FinalRuleConfig.networks:type_name -> xray.common.net.Network
-	12, // 3: xray.proxy.freedom.FinalRuleConfig.port_list:type_name -> xray.common.net.PortList
-	13, // 4: xray.proxy.freedom.FinalRuleConfig.ip:type_name -> xray.common.geodata.IPRule
+	12, // 2: xray.proxy.freedom.FinalRuleConfig.networks:type_name -> xray.common.net.Network
+	13, // 3: xray.proxy.freedom.FinalRuleConfig.port_list:type_name -> xray.common.net.PortList
+	14, // 4: xray.proxy.freedom.FinalRuleConfig.ip:type_name -> xray.common.geodata.IPRule
 	4,  // 5: xray.proxy.freedom.FinalRuleConfig.block_delay:type_name -> xray.proxy.freedom.Range
-	14, // 6: xray.proxy.freedom.Config.domain_strategy:type_name -> xray.transport.internet.DomainStrategy
+	15, // 6: xray.proxy.freedom.Config.domain_strategy:type_name -> xray.transport.internet.DomainStrategy
 	1,  // 7: xray.proxy.freedom.Config.destination_override:type_name -> xray.proxy.freedom.DestinationOverride
 	2,  // 8: xray.proxy.freedom.Config.fragment:type_name -> xray.proxy.freedom.Fragment
 	3,  // 9: xray.proxy.freedom.Config.noises:type_name -> xray.proxy.freedom.Noise
@@ -853,11 +941,12 @@ var file_proxy_freedom_config_proto_depIdxs = []int32{
 	7,  // 11: xray.proxy.freedom.Config.tcp_fingerprint_settings:type_name -> xray.proxy.freedom.TCPFingerprintSettings
 	8,  // 12: xray.proxy.freedom.Config.tcp_handshake_delay:type_name -> xray.proxy.freedom.TCPHandshakeDelay
 	9,  // 13: xray.proxy.freedom.Config.tcp_ack_delay:type_name -> xray.proxy.freedom.TCPAckDelay
-	14, // [14:14] is the sub-list for method output_type
-	14, // [14:14] is the sub-list for method input_type
-	14, // [14:14] is the sub-list for extension type_name
-	14, // [14:14] is the sub-list for extension extendee
-	0,  // [0:14] is the sub-list for field type_name
+	10, // 14: xray.proxy.freedom.TCPAckDelay.auto_rtt:type_name -> xray.proxy.freedom.TCPAutoRTT
+	15, // [15:15] is the sub-list for method output_type
+	15, // [15:15] is the sub-list for method input_type
+	15, // [15:15] is the sub-list for extension type_name
+	15, // [15:15] is the sub-list for extension extendee
+	0,  // [0:15] is the sub-list for field type_name
 }
 
 func init() { file_proxy_freedom_config_proto_init() }
@@ -871,7 +960,7 @@ func file_proxy_freedom_config_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proxy_freedom_config_proto_rawDesc), len(file_proxy_freedom_config_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   9,
+			NumMessages:   10,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

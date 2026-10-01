@@ -41,3 +41,27 @@ func ReadTCPFingerprintMetadata(conn net.Conn) (string, string) {
 	}
 	return ClassifyTCPSYN(packet[:size]), ClassifyTCPSYNECN(packet[:size])
 }
+
+// ReadInitialTCPRTT is called at accept, before TLS/REALITY or application I/O.
+// Zero means unavailable; retain microseconds to avoid rounding sub-ms links to zero.
+func ReadInitialTCPRTT(conn net.Conn) uint32 {
+	sc, ok := conn.(syscall.Conn)
+	if !ok {
+		return 0
+	}
+	raw, err := sc.SyscallConn()
+	if err != nil {
+		return 0
+	}
+	var rtt uint32
+	err = raw.Control(func(fd uintptr) {
+		info, e := unix.GetsockoptTCPInfo(int(fd), unix.IPPROTO_TCP, unix.TCP_INFO)
+		if e == nil && info.State == 1 {
+			rtt = info.Rtt
+		}
+	})
+	if err != nil {
+		return 0
+	}
+	return rtt
+}

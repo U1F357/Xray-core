@@ -36,9 +36,17 @@ type FreedomConfig struct {
 }
 
 type TCPAckDelay struct {
-	MinMs    uint32 `json:"minMs"`
-	MaxMs    uint32 `json:"maxMs"`
-	WindowMs uint32 `json:"windowMs"`
+	AutoRTT    *TCPAutoRTT `json:"autoRTT"`
+	Continuous bool        `json:"continuous"`
+	MinMs      *uint32     `json:"minMs"`
+	MaxMs      *uint32     `json:"maxMs"`
+	WindowMs   uint32      `json:"windowMs"`
+}
+
+type TCPAutoRTT struct {
+	FallbackMs *uint32 `json:"fallbackMs"`
+	MinMs      uint32  `json:"minMs"`
+	MaxMs      *uint32 `json:"maxMs"`
 }
 
 type TCPHandshakeDelay struct {
@@ -77,7 +85,26 @@ func (c *FreedomConfig) Build() (proto.Message, error) {
 
 	config := new(freedom.Config)
 	if a := c.TCPAckDelay; a != nil {
-		config.TcpAckDelay = &freedom.TCPAckDelay{MinMs: a.MinMs, MaxMs: a.MaxMs, WindowMs: a.WindowMs}
+		d := &freedom.TCPAckDelay{WindowMs: a.WindowMs, Continuous: a.Continuous}
+		if a.MinMs != nil || a.MaxMs != nil {
+			// An explicitly specified manual range (including zero) takes precedence.
+			if a.MinMs != nil {
+				d.MinMs = *a.MinMs
+			}
+			if a.MaxMs != nil {
+				d.MaxMs = *a.MaxMs
+			}
+		} else if a.AutoRTT != nil {
+			r := a.AutoRTT
+			d.AutoRtt = &freedom.TCPAutoRTT{FallbackMs: 100, MinMs: r.MinMs, MaxMs: 1000}
+			if r.FallbackMs != nil {
+				d.AutoRtt.FallbackMs = *r.FallbackMs
+			}
+			if r.MaxMs != nil {
+				d.AutoRtt.MaxMs = *r.MaxMs
+			}
+		}
+		config.TcpAckDelay = d
 	}
 	if c.TCPHandshakeDelay != nil {
 		config.TcpHandshakeDelay = &freedom.TCPHandshakeDelay{MinMs: c.TCPHandshakeDelay.MinMs, MaxMs: c.TCPHandshakeDelay.MaxMs}

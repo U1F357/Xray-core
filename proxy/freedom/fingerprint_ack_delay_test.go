@@ -40,14 +40,14 @@ func TestTCPAckDelayOrderingWindowAndHandshake(t *testing.T) {
 		d.sample = func() time.Duration { x := samples[i]; i++; return x }
 		done := make(chan struct{})
 		go func() { d.run(); close(done) }()
-		d.submit(ackTestPacket(v6, 14000, 2, 100))
+		submitObserved(d, ackTestPacket(v6, 14000, 2, 100))
 		<-output
 		start := time.Now()
-		d.submit(ackTestPacket(v6, 14000, 0x10, 101)) // Third handshake ACK.
-		d.submit(ackTestPacket(v6, 14000, 0x18, 102)) // Data-bearing ACK, must not overtake.
-		d.submit(ackTestPacket(v6, 14000, 0x11, 103)) // FIN+ACK is included.
+		submitObserved(d, ackTestPacket(v6, 14000, 0x10, 101)) // Third handshake ACK.
+		submitObserved(d, ackTestPacket(v6, 14000, 0x18, 102)) // Data-bearing ACK, must not overtake.
+		submitObserved(d, ackTestPacket(v6, 14000, 0x11, 103)) // FIN+ACK is included.
 		time.Sleep(65 * time.Millisecond)
-		d.submit(ackTestPacket(v6, 14000, 0x18, 104)) // Outside window, behind queued tail.
+		submitObserved(d, ackTestPacket(v6, 14000, 0x18, 104)) // Outside window, behind queued tail.
 		for seq := uint32(101); seq <= 104; seq++ {
 			select {
 			case s := <-output:
@@ -59,12 +59,12 @@ func TestTCPAckDelayOrderingWindowAndHandshake(t *testing.T) {
 			}
 		}
 		now := time.Now()
-		d.submit(ackTestPacket(v6, 14000, 0x18, 105))
+		submitObserved(d, ackTestPacket(v6, 14000, 0x18, 105))
 		s := <-output
 		if s.at.Sub(now) > 30*time.Millisecond {
 			t.Fatal("window did not expire")
 		}
-		if i != 3 {
+		if i != 1 {
 			t.Fatal("sampled delay after window", i)
 		}
 		cancel()
@@ -82,23 +82,23 @@ func TestTCPAckDelayIsolationResetAndReuse(t *testing.T) {
 	d := newACKDelayer(ctx, &TCPAckDelay{MinMs: 100, MaxMs: 100}, func(p []byte) { _, h := tcpDelayTuple(p); output <- binary.BigEndian.Uint32(h[4:8]) }, nil)
 	done := make(chan struct{})
 	go func() { d.run(); close(done) }()
-	d.submit(ackTestPacket(false, 14000, 2, 1))
+	submitObserved(d, ackTestPacket(false, 14000, 2, 1))
 	<-output
-	d.submit(ackTestPacket(false, 14000, 0x18, 2))
-	d.submit(ackTestPacket(false, 14001, 0x10, 3)) // Unregistered flow is immediate.
+	submitObserved(d, ackTestPacket(false, 14000, 0x18, 2))
+	submitObserved(d, ackTestPacket(false, 14001, 0x10, 3)) // Unregistered flow is immediate.
 	if <-output != 3 {
 		t.Fatal("other flow blocked")
 	}
-	d.submit(ackTestPacket(false, 14000, 0x14, 4)) // RST drops stale queued data.
+	submitObserved(d, ackTestPacket(false, 14000, 0x14, 4)) // RST drops stale queued data.
 	if <-output != 4 {
 		t.Fatal("reset delayed")
 	}
-	d.submit(ackTestPacket(false, 14000, 2, 5))
+	submitObserved(d, ackTestPacket(false, 14000, 2, 5))
 	<-output
-	d.submit(ackTestPacket(false, 14000, 0x18, 6))
-	d.submit(ackTestPacket(false, 14000, 2, 7))
+	submitObserved(d, ackTestPacket(false, 14000, 0x18, 6))
+	submitObserved(d, ackTestPacket(false, 14000, 2, 7))
 	<-output // New ISN cancels old tuple.
-	d.submit(ackTestPacket(false, 14000, 0x10, 8))
+	submitObserved(d, ackTestPacket(false, 14000, 0x10, 8))
 	select {
 	case n := <-output:
 		if n != 8 {
@@ -130,8 +130,8 @@ func TestTCPAckDelayBoundsAndParallel(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			d.submit(ackTestPacket(i%2 == 0, uint16(14000+i), 2, 1))
-			d.submit(ackTestPacket(i%2 == 0, uint16(14000+i), 0x18, 2))
+			submitObserved(d, ackTestPacket(i%2 == 0, uint16(14000+i), 2, 1))
+			submitObserved(d, ackTestPacket(i%2 == 0, uint16(14000+i), 0x18, 2))
 		}(i)
 	}
 	wg.Wait()
@@ -143,8 +143,11 @@ func TestTCPAckDelayBoundsAndParallel(t *testing.T) {
 	mu.Unlock()
 	d.mu.Lock()
 	d.bytes = ackDelayTotalBytes
+	for _, f := range d.flows {
+		f.overflowUntil = time.Now().Add(time.Second)
+	}
 	d.mu.Unlock()
-	d.submit(ackTestPacket(false, 14001, 0x18, 3))
+	submitObserved(d, ackTestPacket(false, 14001, 0x18, 3))
 	d.mu.Lock()
 	if d.drops != 1 {
 		t.Fatal("queue limit not enforced")
@@ -185,8 +188,8 @@ func TestTCPAckDelayCancelPendingAndIdleExpiry(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	sent := 0
 	d := newACKDelayer(ctx, &TCPAckDelay{MinMs: 100, MaxMs: 100}, func([]byte) { sent++ }, nil)
-	d.submit(ackTestPacket(false, 15000, 2, 1))
-	d.submit(ackTestPacket(false, 15000, 0x18, 2))
+	submitObserved(d, ackTestPacket(false, 15000, 2, 1))
+	submitObserved(d, ackTestPacket(false, 15000, 0x18, 2))
 	if d.bytes == 0 {
 		t.Fatal("packet not queued")
 	}
@@ -198,7 +201,7 @@ func TestTCPAckDelayCancelPendingAndIdleExpiry(t *testing.T) {
 	ctx, cancel = context.WithCancel(context.Background())
 	defer cancel()
 	d = newACKDelayer(ctx, &TCPAckDelay{MaxMs: 1}, func([]byte) {}, nil)
-	d.submit(ackTestPacket(false, 15000, 2, 1))
+	submitObserved(d, ackTestPacket(false, 15000, 2, 1))
 	for _, f := range d.flows {
 		f.expiry = time.Now().Add(-time.Second)
 	}
@@ -213,4 +216,31 @@ func TestTCPAckDelayCancelPendingAndIdleExpiry(t *testing.T) {
 	if left != 0 {
 		t.Fatal("expired SYN state retained")
 	}
+}
+
+// Seed the SYN-ACK that a real active connection receives before sending ACKs.
+func submitObserved(d *ackDelayer, p []byte) {
+	d.submit(p)
+	_, h := tcpDelayTuple(p)
+	if h != nil && h[13]&0x12 == 2 {
+		q := reverseACKPacket(p)
+		_, r := tcpDelayTuple(q)
+		r[13] = 0x12
+		binary.BigEndian.PutUint32(r[4:8], 0xffffffff)
+		binary.BigEndian.PutUint32(r[8:12], binary.BigEndian.Uint32(h[4:8])+1)
+		d.observe(q)
+	}
+}
+
+func reverseACKPacket(p []byte) []byte {
+	q := append([]byte(nil), p...)
+	a, b, n := 12, 16, 4
+	if p[0]>>4 == 6 {
+		a, b, n = 8, 24, 16
+	}
+	copy(q[a:a+n], p[b:b+n])
+	copy(q[b:b+n], p[a:a+n])
+	_, h := tcpDelayTuple(q)
+	h[0], h[1], h[2], h[3] = h[2], h[3], h[0], h[1]
+	return q
 }

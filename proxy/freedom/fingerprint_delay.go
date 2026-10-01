@@ -30,9 +30,10 @@ type delayedSYNACK struct {
 // Entries live only until Connect completes/cancels, so established connections
 // and subsequently reused tuples cannot inherit an earlier delay.
 type synACKDelayer struct {
-	mu      sync.Mutex
-	pending map[synACKFlow]*delayedSYNACK
-	inject  func([]byte)
+	deadlineFor func([]byte, time.Time) time.Time
+	mu          sync.Mutex
+	pending     map[synACKFlow]*delayedSYNACK
+	inject      func([]byte)
 }
 
 func randomHandshakeDelay(r *TCPHandshakeDelay) time.Duration {
@@ -103,7 +104,11 @@ func (d *synACKDelayer) enqueue(packet []byte) bool {
 		return true
 	}
 	if e.deadline.IsZero() {
-		e.deadline = time.Now().Add(e.delay)
+		now := time.Now()
+		e.deadline = now.Add(e.delay)
+		if d.deadlineFor != nil {
+			e.deadline = d.deadlineFor(packet, now)
+		}
 		e.wake <- struct{}{}
 	}
 	// Bound duplicate/retransmission memory. TCP can retry dropped excess packets.

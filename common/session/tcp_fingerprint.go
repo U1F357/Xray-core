@@ -3,6 +3,7 @@ package session
 import "context"
 
 type TCPFingerprintPolicy struct {
+	RTT          bool
 	Source       string
 	TrustedUsers []string
 	OnMissing    string

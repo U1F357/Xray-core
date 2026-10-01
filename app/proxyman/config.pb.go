@@ -488,6 +488,7 @@ type TCPFingerprintConfig struct {
 	Source        string                 `protobuf:"bytes,1,opt,name=source,proto3" json:"source,omitempty"`
 	TrustedUsers  []string               `protobuf:"bytes,2,rep,name=trusted_users,json=trustedUsers,proto3" json:"trusted_users,omitempty"`
 	OnMissing     string                 `protobuf:"bytes,3,opt,name=on_missing,json=onMissing,proto3" json:"on_missing,omitempty"`
+	Rtt           bool                   `protobuf:"varint,4,opt,name=rtt,proto3" json:"rtt,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -543,6 +544,13 @@ func (x *TCPFingerprintConfig) GetOnMissing() string {
 	return ""
 }
 
+func (x *TCPFingerprintConfig) GetRtt() bool {
+	if x != nil {
+		return x.Rtt
+	}
+	return false
+}
+
 var File_app_proxyman_config_proto protoreflect.FileDescriptor
 
 const file_app_proxyman_config_proto_rawDesc = "" +
@@ -579,12 +587,13 @@ const file_app_proxyman_config_proto_rawDesc = "" +
 	"\aenabled\x18\x01 \x01(\bR\aenabled\x12 \n" +
 	"\vconcurrency\x18\x02 \x01(\x05R\vconcurrency\x12(\n" +
 	"\x0fxudpConcurrency\x18\x03 \x01(\x05R\x0fxudpConcurrency\x12(\n" +
-	"\x0fxudpProxyUDP443\x18\x04 \x01(\tR\x0fxudpProxyUDP443\"r\n" +
+	"\x0fxudpProxyUDP443\x18\x04 \x01(\tR\x0fxudpProxyUDP443\"\x84\x01\n" +
 	"\x14TCPFingerprintConfig\x12\x16\n" +
 	"\x06source\x18\x01 \x01(\tR\x06source\x12#\n" +
 	"\rtrusted_users\x18\x02 \x03(\tR\ftrustedUsers\x12\x1d\n" +
 	"\n" +
-	"on_missing\x18\x03 \x01(\tR\tonMissingBU\n" +
+	"on_missing\x18\x03 \x01(\tR\tonMissing\x12\x10\n" +
+	"\x03rtt\x18\x04 \x01(\bR\x03rttBU\n" +
 	"\x15com.xray.app.proxymanP\x01Z&github.com/xtls/xray-core/app/proxyman\xaa\x02\x11Xray.App.Proxymanb\x06proto3"
 
 var (

@@ -37,6 +37,8 @@ func ExportIDToError(ctx context.Context) errors.ExportOption {
 type Inbound struct {
 	// TCPFingerprint is the effective category selected by the local inbound policy.
 	// Forwarded values are accepted only from explicitly trusted authenticated users.
+	TCPRTTUs             uint32
+	TCPRTTSource         string
 	TCPFingerprintSource string
 	TCPFingerprint       string
 	TCPECN               string // Offered ECN mode, subject to the same inbound trust policy.
