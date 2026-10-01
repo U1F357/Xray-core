@@ -17,6 +17,7 @@ import (
 )
 
 type FreedomConfig struct {
+	TCPAckDelay            *TCPAckDelay                    `json:"tcpAckDelay"`
 	TCPHandshakeDelay      *TCPHandshakeDelay              `json:"tcpHandshakeDelay"`
 	TargetStrategy         string                          `json:"targetStrategy"`
 	DomainStrategy         string                          `json:"domainStrategy"`
@@ -32,6 +33,12 @@ type FreedomConfig struct {
 	TCPFingerprintFallback string                          `json:"tcpFingerprintFallback"`
 	TCPFingerprint         string                          `json:"tcpFingerprint"`
 	TCPFingerprintSettings *freedom.TCPFingerprintSettings `json:"tcpFingerprintSettings"`
+}
+
+type TCPAckDelay struct {
+	MinMs    uint32 `json:"minMs"`
+	MaxMs    uint32 `json:"maxMs"`
+	WindowMs uint32 `json:"windowMs"`
 }
 
 type TCPHandshakeDelay struct {
@@ -69,6 +76,9 @@ func (c *FreedomConfig) Build() (proto.Message, error) {
 	}
 
 	config := new(freedom.Config)
+	if a := c.TCPAckDelay; a != nil {
+		config.TcpAckDelay = &freedom.TCPAckDelay{MinMs: a.MinMs, MaxMs: a.MaxMs, WindowMs: a.WindowMs}
+	}
 	if c.TCPHandshakeDelay != nil {
 		config.TcpHandshakeDelay = &freedom.TCPHandshakeDelay{MinMs: c.TCPHandshakeDelay.MinMs, MaxMs: c.TCPHandshakeDelay.MaxMs}
 	}

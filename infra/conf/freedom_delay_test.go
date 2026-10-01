@@ -25,3 +25,18 @@ func TestFreedomHandshakeDelayJSON(t *testing.T) {
 		}
 	}
 }
+
+func TestFreedomAckDelayJSON(t *testing.T) {
+	var c FreedomConfig
+	if err := json.Unmarshal([]byte(`{"tcpFingerprint":"auto","tcpAckDelay":{"minMs":80,"maxMs":120,"windowMs":10000}}`), &c); err != nil {
+		t.Fatal(err)
+	}
+	p, err := c.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := p.(*freedom.Config).TcpAckDelay
+	if a == nil || a.MinMs != 80 || a.MaxMs != 120 || a.WindowMs != 10000 {
+		t.Fatal(a)
+	}
+}

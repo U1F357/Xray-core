@@ -114,13 +114,13 @@ func (d *synACKDelayer) enqueue(packet []byte) bool {
 	return true
 }
 
-// Parse complete, unfragmented SYN-ACK packets, including IPv4 options and
+// Parse complete, unfragmented TCP packets, including IPv4 options and
 // IPv6 hop-by-hop/routing/destination/AH headers. Other traffic goes straight to
 // the stack, which remains responsible for checksums and TCP validity.
-func synACKTuple(p []byte) (synACKFlow, bool) {
+func tcpDelayTuple(p []byte) (synACKFlow, []byte) {
 	var key synACKFlow
 	if len(p) < 20 {
-		return key, false
+		return key, nil
 	}
 	offset := 0
 	switch p[0] >> 4 {
@@ -128,18 +128,18 @@ func synACKTuple(p []byte) (synACKFlow, bool) {
 		offset = int(p[0]&15) * 4
 		total := int(binary.BigEndian.Uint16(p[2:4]))
 		if offset < 20 || total < offset+20 || total > len(p) || p[9] != 6 || binary.BigEndian.Uint16(p[6:8])&0x3fff != 0 {
-			return key, false
+			return key, nil
 		}
 		p = p[:total]
 		key.remote = tcpip.AddrFromSlice(p[12:16])
 		key.local = tcpip.AddrFromSlice(p[16:20])
 	case 6:
 		if len(p) < 40 {
-			return key, false
+			return key, nil
 		}
 		total := 40 + int(binary.BigEndian.Uint16(p[4:6]))
 		if total > len(p) {
-			return key, false
+			return key, nil
 		}
 		p = p[:total]
 		key.remote = tcpip.AddrFromSlice(p[8:24])
@@ -148,7 +148,7 @@ func synACKTuple(p []byte) (synACKFlow, bool) {
 		next := p[6]
 		for next != 6 {
 			if offset+2 > len(p) {
-				return key, false
+				return key, nil
 			}
 			kind := next
 			next = p[offset]
@@ -158,21 +158,26 @@ func synACKTuple(p []byte) (synACKFlow, bool) {
 			case 51:
 				offset += (int(p[offset+1]) + 2) * 4
 			default:
-				return key, false
+				return key, nil
 			}
 		}
 	default:
-		return key, false
+		return key, nil
 	}
 	if offset+20 > len(p) {
-		return key, false
+		return key, nil
 	}
 	h := p[offset:]
 	size := int(h[12]>>4) * 4
-	if size < 20 || size > len(h) || h[13]&0x17 != 0x12 {
-		return key, false
+	if size < 20 || size > len(h) {
+		return key, nil
 	}
 	key.remotePort = binary.BigEndian.Uint16(h[:2])
 	key.localPort = binary.BigEndian.Uint16(h[2:4])
-	return key, true
+	return key, h
+}
+
+func synACKTuple(p []byte) (synACKFlow, bool) {
+	key, h := tcpDelayTuple(p)
+	return key, h != nil && h[13]&0x17 == 0x12
 }

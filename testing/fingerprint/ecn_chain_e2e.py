@@ -14,10 +14,11 @@ import time
 ROOT=Path(__file__).resolve().parents[2]
 BINARY=Path(sys.argv[1]).resolve()
 V6='--ipv6' in sys.argv[2:]
-DELAY='--handshake-delay' in sys.argv[2:]
+ACKDELAY='--ack-delay' in sys.argv[2:]
+DELAY='--handshake-delay' in sys.argv[2:] or ACKDELAY
 FIRST='2001:db8:11::2' if V6 else '198.18.0.2'
 DEST='2001:db8:22::2' if V6 else '192.0.2.2'
-OUT=ROOT/'testing/fingerprint/artifacts'/(('ecn-chain-v6' if V6 else 'ecn-chain')+('-delay' if DELAY else ''));OUT.mkdir(parents=True,exist_ok=True)
+OUT=ROOT/'testing/fingerprint/artifacts'/(('ecn-chain-v6' if V6 else 'ecn-chain')+('-ack-delay' if ACKDELAY else '-delay' if DELAY else ''));OUT.mkdir(parents=True,exist_ok=True)
 PREFIX=f'xfpecn-{os.getpid()}'
 CLIENT,SERVER,PEER=[PREFIX+x for x in ('c','s','p')]
 spaces=[];processes=[];logs=[]
@@ -82,12 +83,16 @@ try:
  run(['ip','route','add','default','via',DEST],SERVER)
  if V6:
   for ns in spaces:run(['sysctl','-qw','net.ipv6.conf.all.forwarding=1'],ns)
- http='''import http.server,threading,signal,socket,sys,ssl
+ http='''import http.server,threading,signal,socket,sys,ssl,time
 v6=sys.argv[1]=="1"
 if v6:http.server.ThreadingHTTPServer.address_family=socket.AF_INET6
 class H(http.server.BaseHTTPRequestHandler):
  def do_GET(self):
-  b=b"x"*131072;self.send_response(200);self.send_header("Content-Length",str(len(b)));self.end_headers();self.wfile.write(b)
+  b=b"x"*131072;self.send_response(200);self.send_header("Content-Length",str(len(b)));self.end_headers()
+  if len(sys.argv)>4:
+   self.wfile.write(b[:1024]);self.wfile.flush();time.sleep(11)
+   self.wfile.write(b[1024:])
+  else:self.wfile.write(b)
  def log_message(self,*a):pass
 for port in range(18080,18089):
  s=http.server.ThreadingHTTPServer(("::" if v6 else "0.0.0.0",port),H)
@@ -100,9 +105,9 @@ print("ready",flush=True);signal.pause()
  if DELAY:
   cert=OUT/'cert.pem';key=OUT/'key.pem'
   run(['openssl','req','-x509','-newkey','rsa:2048','-nodes','-days','1','-subj','/CN=localhost','-keyout',str(key),'-out',str(cert)],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-  tlsargs=[str(cert),str(key)]
+  tlsargs=[str(cert),str(key)]+(['ack-delay'] if ACKDELAY else [])
  p=launch(['python3','-u','-c',http,'1' if V6 else '0']+tlsargs,PEER,'http');ready(p,'http','ready')
- core(SERVER,'exit',config([inbound(12500,'middle','vless')],[{'protocol':'freedom','settings':{'tcpFingerprint':'auto','tcpECN':'auto',**({'tcpHandshakeDelay':{'minMs':200,'maxMs':300}} if DELAY else {}),'finalRules':[{'action':'allow','ip':[DEST],'port':'18080-18088'}]}}]))
+ core(SERVER,'exit',config([inbound(12500,'middle','vless')],[{'protocol':'freedom','settings':{'tcpFingerprint':'auto','tcpECN':'auto',**({'tcpHandshakeDelay':{'minMs':200,'maxMs':300}} if DELAY else {}),**({'tcpAckDelay':{'minMs':80,'maxMs':120,'windowMs':10000}} if ACKDELAY else {}),'finalRules':[{'action':'allow','ip':[DEST],'port':'18080-18088'}]}}]))
  core(SERVER,'middle',config([inbound(12400,'entry','vless')],[outbound(12500)]))
  core(SERVER,'entry',config([inbound(12345,'client','syn')],[outbound(12400)]))
  ins=[];outs=[];rules=[]
@@ -162,7 +167,10 @@ s.close()
   assert row['flags']=={'none':2,'classic':0xc2,'accecn':0x1c2}[mode],row
   expected_ecn=0 if mode=='none' else 2 if profile=='windows' else 1 if profile=='macos' and mode=='accecn' else 0
   assert row['ecn']==expected_ecn,row
- if DELAY:
+ if ACKDELAY:
+  from ack_delay_capture import verify
+  verify(OUT/'egress.pcap',OUT/'timing.json')
+ elif DELAY:
   from handshake_delay_capture import verify
   verify(OUT/'egress.pcap',OUT/'exit.log',OUT/'timing.json')
  text=(OUT/'exit.log').read_text()

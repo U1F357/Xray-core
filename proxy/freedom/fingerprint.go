@@ -27,6 +27,15 @@ func (c *Config) RequiresTCPFingerprintCapture() bool {
 
 // ValidateTCPFingerprint validates both JSON-built and protobuf configurations.
 func ValidateTCPFingerprint(c *Config) error {
+	if a := c.TcpAckDelay; a != nil {
+		if c.TcpFingerprint == "" {
+			return fmt.Errorf("tcpAckDelay requires tcpFingerprint")
+		}
+		if a.MinMs > a.MaxMs || a.MaxMs > 1000 || a.WindowMs > 60000 {
+			return fmt.Errorf("tcpAckDelay requires 0 <= minMs <= maxMs <= 1000 and windowMs <= 60000 (0 means 10000)")
+		}
+	}
+
 	if delay := c.TcpHandshakeDelay; delay != nil {
 		if c.TcpFingerprint == "" {
 			return fmt.Errorf("tcpHandshakeDelay requires tcpFingerprint")

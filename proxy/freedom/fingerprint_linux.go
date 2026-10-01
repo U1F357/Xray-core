@@ -31,6 +31,7 @@ import (
 )
 
 type tunFingerprintDialer struct {
+	ackDelay       *ackDelayer
 	handshakeDelay *synACKDelayer
 	delayRange     *TCPHandshakeDelay
 	ecnMode        string
@@ -112,9 +113,13 @@ func newFingerprintDialerFamily(c *Config, is6 bool) (fingerprintDialer, error) 
 	})
 	lifetime, cancel := context.WithCancel(context.Background())
 	d := &tunFingerprintDialer{ecnMode: c.TcpEcn, profile: c.TcpFingerprint, stack: s, file: file, link: link, ctx: lifetime, cancel: cancel, automatic: automatic, mtu: mtu, headers: newFingerprintIPHeaders(c.TcpFingerprint)}
-	if c.TcpHandshakeDelay != nil && c.TcpHandshakeDelay.MaxMs != 0 {
+	if c.TcpHandshakeDelay != nil && c.TcpHandshakeDelay.MaxMs != 0 && (c.TcpAckDelay == nil || c.TcpAckDelay.MaxMs == 0) {
 		d.delayRange = c.TcpHandshakeDelay
 		d.handshakeDelay = &synACKDelayer{pending: make(map[synACKFlow]*delayedSYNACK), inject: d.injectPacket}
+	}
+	if c.TcpAckDelay != nil && c.TcpAckDelay.MaxMs != 0 {
+		d.ackDelay = newACKDelayer(lifetime, c.TcpAckDelay, d.writePacket, func(message string) { xerrors.LogWarning(lifetime, message) })
+		xerrors.LogInfo(lifetime, "TCP ACK delay: minMs=", c.TcpAckDelay.MinMs, " maxMs=", c.TcpAckDelay.MaxMs, " windowMs=", d.ackDelay.cfg.WindowMs, " includesHandshake=true replacesSYNACKDelay=true")
 	}
 	ok := false
 	defer func() {
@@ -151,6 +156,10 @@ func newFingerprintDialerFamily(c *Config, is6 bool) (fingerprintDialer, error) 
 	}
 	d.subnet = subnet
 	s.SetRouteTable([]tcpip.Route{{Destination: subnet, NIC: 1}})
+	if d.ackDelay != nil {
+		d.pumps.Add(1)
+		go func() { defer d.pumps.Done(); d.ackDelay.run() }()
+	}
 	d.pumps.Add(2)
 	go d.readPackets()
 	go d.writePackets()
@@ -200,13 +209,20 @@ func (d *tunFingerprintDialer) writePackets() {
 		}
 		view := packet.ToView()
 		packet.DecRef()
-		d.headers.apply(view.AsSlice())
-		_, err := d.file.Write(view.AsSlice())
-		view.Release()
-		if err != nil {
-			go d.Close()
-			return
+		if d.ackDelay != nil {
+			d.ackDelay.submit(view.AsSlice())
+		} else {
+			d.writePacket(view.AsSlice())
 		}
+		view.Release()
+	}
+}
+
+func (d *tunFingerprintDialer) writePacket(data []byte) {
+	d.headers.apply(data)
+	if _, err := d.file.Write(data); err != nil {
+		d.cancel()
+		go d.Close()
 	}
 }
 

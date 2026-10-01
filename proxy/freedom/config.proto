@@ -68,6 +68,7 @@ message Config {
   // template (default), auto (ingress metadata), none, classic or accecn.
   string tcp_ecn = 12;
   TCPHandshakeDelay tcp_handshake_delay = 13;
+  TCPAckDelay tcp_ack_delay = 14;
 }
 
 // Optional manual override. Omit to automatically provision the Linux network.
@@ -81,4 +82,11 @@ message TCPFingerprintSettings {
 message TCPHandshakeDelay {
   uint32 min_ms = 1 [json_name = "minMs"];
   uint32 max_ms = 2 [json_name = "maxMs"];
+}
+
+// Per-packet outgoing ACK delay during the initial connection window.
+message TCPAckDelay {
+  uint32 min_ms = 1;
+  uint32 max_ms = 2;
+  uint32 window_ms = 3; // Zero means 10000 ms.
 }

@@ -44,3 +44,5 @@ SYN/SYN-ACK 重传或 ECN 回退，因此建议从几十至一百多毫秒开始
 发布测试使用 IPv4/IPv6、三平台 × 三 ECN 模式的九条并发 TLS 连接，在目标侧
 抓包核对 SYN-ACK → ACK 延迟、ACK → ClientHello 间隔和后续数据 ACK，另有
 队列上限、取消、元组复用及竞态测试。
+
+自 fp-v0.6.0 起，如果同时启用 `tcpAckDelay`，它将替代本页的 SYN-ACK 等待，握手只延迟一次；见 [ACK 窗口说明](tcp-ack-delay.zh-CN.md)。
